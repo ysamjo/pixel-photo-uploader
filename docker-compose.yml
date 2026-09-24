@@ -1,12 +1,8 @@
 services:
   server:
-    # Prebuilt image, as the App Store requires. Build and publish once:
-    #   docker buildx build --platform linux/amd64,linux/arm64 \
-    #     -t <registry>/pixel-photo-uploader:3.3.12 --push .
-    #   docker buildx imagetools inspect <registry>/pixel-photo-uploader:3.3.12
-    # then pin what that prints:  <registry>/...:3.3.12@sha256:<digest>
-    # Local test without a registry: docker build -t pixel-photo-uploader:3.3.12 .
-    image: pixel-photo-uploader:3.3.12
+    # Built by .github/workflows/publish.yml from tag v3.3.12. The digest is the
+    # multi-arch index (linux/amd64 + linux/arm64), which the App Store requires.
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:d4234fa1f35fe0c4afff79558c32db15d20d59f61e4b1ab510a00396d0d1cf19
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     init: true
     restart: on-failure
@@ -25,7 +21,7 @@ services:
       # - "${APP_DATA_DIR}/data/inbox:/data/inbox"
 
   watcher:
-    image: pixel-photo-uploader:3.3.12
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:d4234fa1f35fe0c4afff79558c32db15d20d59f61e4b1ab510a00396d0d1cf19
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     init: true
     restart: on-failure

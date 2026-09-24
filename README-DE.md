@@ -61,15 +61,18 @@ abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
 
 1. Ordner `pixel-photo-uploader/` in den Community-App-Store legen (oder
    `~/umbrel/system/app-store/` bzw. per `umbrel-app-store`-Config).
-2. Image bauen und veröffentlichen, dann in `docker-compose.yml` den
-   Digest eintragen (der offizielle Store laesst kein `build:` zu):
+2. Das Image kommt aus dem Repository-Build (`.github/workflows/publish.yml`,
+   Tag `v3.3.12` -> `ghcr.io/ysamjo/pixel-photo-uploader:3.3.12`). In
+   `docker-compose.yml` steht der Digest des manifest lists, weil der offizielle
+   Store kein `build:` zulaesst. Selbst nach einem Digest schauen:
 
    ```sh
-   docker buildx build --platform linux/amd64,linux/arm64 \
-     -t <registry>/pixel-photo-uploader:3.3.12 --push .
-   docker buildx imagetools inspect <registry>/pixel-photo-uploader:3.3.12
-   # image: <registry>/pixel-photo-uploader:3.3.12@sha256:<digest>
+   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.12
+   # image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:<digest>
    ```
+
+   Zum Bauen ohne ghcr-Zugang: `docker buildx build --platform linux/amd64,linux/arm64
+   -t <registry>/pixel-photo-uploader:3.3.12 --push .`
 
    Ohne Registry reicht auf dem Umbrel einmalig:
    `docker build -t pixel-photo-uploader:3.3.12 .`

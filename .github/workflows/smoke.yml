@@ -1,0 +1,34 @@
+name: Smoke test published image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to test"
+        default: "3.3.12"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/ysamjo/pixel-photo-uploader
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull
+        run: docker pull "$IMAGE:${{ inputs.tag }}"
+      - name: Imports und CLI
+        run: |
+          docker run --rm "$IMAGE:${{ inputs.tag }}" \
+            python -c "import app.server, app.cli, app.watch, app.batches; print('imports ok')"
+          docker run --rm "$IMAGE:${{ inputs.tag }}" python -m app.cli --help
+      - name: Web-UI antwortet
+        run: |
+          docker run -d --name ppu -p 8000:8000 -e PPU_STATE_DIR=/tmp/state \
+            "$IMAGE:${{ inputs.tag }}" uvicorn app.server:app --host 0.0.0.0 --port 8000
+          sleep 6
+          curl -fsS http://127.0.0.1:8000/api/status
+          curl -fsS http://127.0.0.1:8000/ | grep -o "Pixel Photo Uploader" | head -1
+          docker logs ppu | tail -5
