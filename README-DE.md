@@ -57,6 +57,10 @@ Das Archiv (`/data/archive`) liegt **ausserhalb** der Freigaben: hierher wird
 nur sortiert, daraus wird nur kopiert. Geloescht werden ausschliesslich
 abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
 
+_ueber Freigabe B kommt auch `companion-log.txt` her: die Pixel-App schreibt
+dorthin ihr Protokoll, und die Statusseite zeigt es unter **Pixel meldet**.
+Damit ist auch ohne Kabel klar, warum die Freigabe-Automatik wartet.
+
 ## Installation auf umbrelOS
 
 1. Ordner `pixel-photo-uploader/` in den Community-App-Store legen (oder
@@ -102,7 +106,7 @@ PPU_STATE_DIR=~/.ppu-test uvicorn app.server:app --port 8000
 ## Pruefung
 
 ```sh
-python -m pytest tests/ -q          # 48 Tests, ohne Docker, ohne Netz
+python -m pytest tests/ -q          # 51 Tests, ohne Docker, ohne Netz
 ```
 
 Offizieller Umbrel-Linter (aus dem `umbrel-apps`-Repository, dieses Paket als

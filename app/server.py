@@ -22,6 +22,7 @@ from . import runner
 from .setup import apply_setup
 
 REFRESH_SECONDS = 45
+COMPANION_LOG_NAME = "companion-log.txt"
 
 
 def _esc(value) -> str:
@@ -138,7 +139,8 @@ SETUP_DEFAULTS = {
 
 
 def render_page(info: dict, log_lines=(), message: str = "",
-                message_kind: str = "ok", values: dict | None = None) -> str:
+                message_kind: str = "ok", values: dict | None = None,
+                companion_lines=()) -> str:
     if info.get("configured"):
         pending = str(info.get("pending") or "")
         running = str(info.get("running") or "")
@@ -207,6 +209,10 @@ def render_page(info: dict, log_lines=(), message: str = "",
 
     note = f"<p class=\"note {message_kind}\">{_esc(message)}</p>" if message else ""
     log = "\n".join(str(line) for line in log_lines) or "(noch kein Log)"
+    pixel = ("\n".join(str(line) for line in companion_lines)
+             if info.get("configured") and companion_lines else "")
+    pixel_section = (f"<h2>Pixel meldet</h2><section><pre>{_esc(pixel)}</pre></section>"
+                     if pixel else "")
     return (
         "<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\">"
         f"<title>Pixel Photo Uploader</title>{refresh}"
@@ -215,6 +221,7 @@ def render_page(info: dict, log_lines=(), message: str = "",
         f"<p class=\"sub\">v{_esc(info.get('version'))} &middot; App + Resilio "
         f"&middot; <span class=\"pill {css}\">{_esc(state)}</span></p>"
         f"{note}{status_section}{actions}{setup}"
+        f"{pixel_section}"
         "<h2>Letzte Meldungen</h2><section>"
         f"<pre>{_esc(log)}</pre></section>"
         "</body></html>"
@@ -253,6 +260,16 @@ def read_log(lines: int = 200, path: Path | None = None) -> list[str]:
     return p.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, lines):]
 
 
+def companion_lines(control_root, limit: int = 15) -> list[str]:
+    """Tail of what the Pixel app wrote into the return-receipt share."""
+    if not str(control_root or "").strip():
+        return []
+    p = Path(str(control_root)) / COMPANION_LOG_NAME
+    if not p.is_file():
+        return []
+    return p.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, limit):]
+
+
 def create_app() -> "FastAPI":
     app = FastAPI(title=f"Pixel Photo Uploader {APP_VERSION}")
 
@@ -266,7 +283,8 @@ def create_app() -> "FastAPI":
             info = {"version": APP_VERSION, "configured": False}
             message, kind = str(exc), "err"
         return render_page(info, log_lines=read_log(120), message=message,
-                           message_kind=kind, values=values)
+                           message_kind=kind, values=values,
+                           companion_lines=companion_lines(info.get("control")))
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

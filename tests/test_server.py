@@ -2,7 +2,7 @@
 import pytest
 
 from app import runner
-from app.server import handle_request_sync, handle_setup, render_page
+from app.server import companion_lines, handle_request_sync, handle_setup, render_page
 
 
 def _info(**over) -> dict:
@@ -57,6 +57,30 @@ def test_synchronisationsbitte_landet_beim_watcher(tmp_path, monkeypatch):
     assert runner.pending_request() == "deep"
     handle_request_sync({})
     assert runner.pending_request() == "sync"
+
+
+def test_pixel_protok_liest_die_letzten_zeilen(tmp_path):
+    control = tmp_path / "control"
+    assert companion_lines(str(control)) == []
+    control.mkdir()
+    (control / "companion-log.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    assert companion_lines(str(control), limit=2) == ["b", "c"]
+
+
+def test_pixel_protok_showt_auf_der_seite_und_escapt(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "companion-log.txt").write_text(
+        "Kein Bestaetigungsknopf <img src=x onerror=alert(1)>\n", encoding="utf-8")
+    html = render_page(_info(), companion_lines=companion_lines(str(control)))
+    assert "Pixel meldet" in html
+    assert "Kein Bestaetigungsknopf" in html
+    assert "<img" not in html
+
+
+def test_seite_ohne_pixel_protok_nennt_keine_leere_grouppe():
+    html = render_page(_info())
+    assert "Pixel meldet" not in html
 
 
 @pytest.fixture
