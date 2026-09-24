@@ -1,0 +1,24 @@
+manifestVersion: 1
+id: pixel-photo-uploader
+category: files
+name: Pixel Photo Uploader
+version: "3.3.12"
+tagline: Foto-Archiv sortieren und per Pixel-App nach Google Fotos uebergeben
+description: >-
+  Port des Windows-Workflows fuer umbrelOS (App + Resilio, kein ADB, kein USB-Kabel).
+  Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (YYYY.MM), legt Abhol-Batches im
+  Resilio-Freigabeordner ab und rechnet die Rueckbelege der Android-App ab, bevor
+  erneut Platz auf dem Telefon gemacht wird. Der Grundabgleich laeuft nach
+  Ordner-Standzeit statt dauernd; ein Vollabgleich folgt alle sieben Tage.
+  Einrichtung, Zähler und "Jetzt synchronisieren" liegen im Web-UI, kein SSH noetig.
+developer: family
+website: ""
+dependencies: []
+repo: ""
+support: ""
+port: 8000
+gallery: []
+path: ""
+releaseNotes: ""
+submitter: ""
+submission: ""

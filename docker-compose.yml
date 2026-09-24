@@ -1,0 +1,44 @@
+services:
+  server:
+    # Prebuilt image, as the App Store requires. Build and publish once:
+    #   docker buildx build --platform linux/amd64,linux/arm64 \
+    #     -t <registry>/pixel-photo-uploader:3.3.12 --push .
+    #   docker buildx imagetools inspect <registry>/pixel-photo-uploader:3.3.12
+    # then pin what that prints:  <registry>/...:3.3.12@sha256:<digest>
+    # Local test without a registry: docker build -t pixel-photo-uploader:3.3.12 .
+    image: pixel-photo-uploader:3.3.12
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    init: true
+    restart: on-failure
+    command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      # The archive is only ever copied from; deletions happen inside the batch
+      # folders below staging/, never below archive/.
+      - "${APP_DATA_DIR}/data/archive:/data/archive"
+      - "${APP_DATA_DIR}/data/staging:/data/staging"
+      - "${APP_DATA_DIR}/data/control:/data/control"
+      - "${APP_DATA_DIR}/data/state:/data/state"
+      # Optional import sources (uncomment and set the paths in the web setup):
+      # - "${APP_DATA_DIR}/data/dropbox:/data/dropbox"
+      # - "${APP_DATA_DIR}/data/inbox:/data/inbox"
+
+  watcher:
+    image: pixel-photo-uploader:3.3.12
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    init: true
+    restart: on-failure
+    command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - "${APP_DATA_DIR}/data/archive:/data/archive"
+      - "${APP_DATA_DIR}/data/staging:/data/staging"
+      - "${APP_DATA_DIR}/data/control:/data/control"
+      - "${APP_DATA_DIR}/data/state:/data/state"
+
+  app_proxy:
+    environment:
+      APP_HOST: pixel-photo-uploader_server_1
+      APP_PORT: "8000"

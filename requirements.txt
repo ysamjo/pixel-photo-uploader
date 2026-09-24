@@ -1,0 +1,10 @@
+# Core deps (always installed, incl. Docker image)
+# Pillow is optional at runtime for EXIF/dimensions, but listed here so
+# Docker + local dev behave the same.
+pillow>=10.0.0
+
+# Web status UI (Umbrel opens the port, CLI works without it).
+# server.py tolerates a missing fastapi, but the Docker CMD always starts
+# uvicorn, so both are runtime deps here. Tests need requirements-dev.txt.
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
