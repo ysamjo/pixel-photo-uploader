@@ -61,15 +61,18 @@ abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
 
 1. Ordner `pixel-photo-uploader/` in den Community-App-Store legen (oder
    `~/umbrel/system/app-store/` bzw. per `umbrel-app-store`-Config).
-2. Image bauen und veröffentlichen, dann in `docker-compose.yml` den
-   Digest eintragen (der offizielle Store laesst kein `build:` zu):
+2. Das Image kommt aus dem Repository-Build (`.github/workflows/publish.yml`,
+   Tag `v3.3.12` -> `ghcr.io/ysamjo/pixel-photo-uploader:3.3.12`). In
+   `docker-compose.yml` steht der Digest des manifest lists, weil der offizielle
+   Store kein `build:` zulaesst. Selbst nach einem Digest schauen:
 
    ```sh
-   docker buildx build --platform linux/amd64,linux/arm64 \
-     -t <registry>/pixel-photo-uploader:3.3.12 --push .
-   docker buildx imagetools inspect <registry>/pixel-photo-uploader:3.3.12
-   # image: <registry>/pixel-photo-uploader:3.3.12@sha256:<digest>
+   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.12
+   # image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:<digest>
    ```
+
+   Zum Bauen ohne ghcr-Zugang: `docker buildx build --platform linux/amd64,linux/arm64
+   -t <registry>/pixel-photo-uploader:3.3.12 --push .`
 
    Ohne Registry reicht auf dem Umbrel einmalig:
    `docker build -t pixel-photo-uploader:3.3.12 .`
@@ -79,9 +82,9 @@ abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
 4. "Sync jetzt" oder "Vollabgleich jetzt" druecken — der watcher uebernimmt,
    die Seite zeigt "eingereiht" und danach die neuen Zahlen.
 
-Vor einer offiziellen App-Store-Einreichung fehlen noch vier Felder im
-Manifest (`website`, `support`, `submitter`, `submission`) — die zeigen auf ein
-noch nicht existierendes Repository und werden deshalb nicht geraten.
+Fuer eine echte Einreichung im offiziellen Store fehlen noch Icon und
+Gallery-Bilder (die kommen ins `umbrel-apps`-Repository, nicht in dieses Paket),
+und `submission` muss auf die PR dort zeigen.
 
 ## Ohne Docker (Entwicklung)
 
@@ -109,8 +112,9 @@ Root zeigen lassen):
 node .tools/lint-apps.mjs pixel-photo-uploader --root <pfad-zu>/umbrel
 ```
 
-Er meldet aktuell nur die vier Manifest-URLs und — bis der Digest eingetragen
-ist — `image.pinned`/`compose.build`.
+Er meldet fuer dieses Paket 0 Fehler. Die Compose-Datei bleibt bewusst ohne
+YAML-Anker: der Parser des Linters loest `<<: *anchor` nicht auf, ein geankertes
+Compose wuerde bei `image` und `volumes` stillschweigend durchgewinkt.
 
 ## Was Windows-only bleibt (bewusst nicht portiert)
 
