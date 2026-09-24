@@ -82,9 +82,9 @@ abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
 4. "Sync jetzt" oder "Vollabgleich jetzt" druecken — der watcher uebernimmt,
    die Seite zeigt "eingereiht" und danach die neuen Zahlen.
 
-Vor einer offiziellen App-Store-Einreichung fehlen noch vier Felder im
-Manifest (`website`, `support`, `submitter`, `submission`) — die zeigen auf ein
-noch nicht existierendes Repository und werden deshalb nicht geraten.
+Fuer eine echte Einreichung im offiziellen Store fehlen noch Icon und
+Gallery-Bilder (die kommen ins `umbrel-apps`-Repository, nicht in dieses Paket),
+und `submission` muss auf die PR dort zeigen.
 
 ## Ohne Docker (Entwicklung)
 
@@ -112,8 +112,9 @@ Root zeigen lassen):
 node .tools/lint-apps.mjs pixel-photo-uploader --root <pfad-zu>/umbrel
 ```
 
-Er meldet aktuell nur die vier Manifest-URLs und — bis der Digest eingetragen
-ist — `image.pinned`/`compose.build`.
+Er meldet fuer dieses Paket 0 Fehler. Die Compose-Datei bleibt bewusst ohne
+YAML-Anker: der Parser des Linters loest `<<: *anchor` nicht auf, ein geankertes
+Compose wuerde bei `image` und `volumes` stillschweigend durchgewinkt.
 
 ## Was Windows-only bleibt (bewusst nicht portiert)
 

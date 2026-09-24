@@ -12,13 +12,15 @@ description: >-
   Ordner-Standzeit statt dauernd; ein Vollabgleich folgt alle sieben Tage.
   Einrichtung, Zähler und "Jetzt synchronisieren" liegen im Web-UI, kein SSH noetig.
 developer: family
-website: ""
+website: https://github.com/ysamjo/pixel-photo-uploader
 dependencies: []
-repo: ""
-support: ""
+repo: https://github.com/ysamjo/pixel-photo-uploader
+support: https://github.com/ysamjo/pixel-photo-uploader/issues
 port: 8000
 gallery: []
 path: ""
 releaseNotes: ""
-submitter: ""
-submission: ""
+submitter: ysamjo
+# Erst die Release-PR dieses Repos; vor einer echten Einreichung durch die PR
+# im umbrel-apps-Repository ersetzen.
+submission: https://github.com/ysamjo/pixel-photo-uploader/pull/1
