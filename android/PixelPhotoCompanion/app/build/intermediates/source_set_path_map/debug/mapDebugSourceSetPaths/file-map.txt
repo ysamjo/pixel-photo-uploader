@@ -1,0 +1,7 @@
+de.pixelphotouploader.companion.app-pngs-0 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/build/generated/res/pngs/debug
+de.pixelphotouploader.companion.app-resValues-1 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/build/generated/res/resValues/debug
+de.pixelphotouploader.companion.app-packageDebugResources-2 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
+de.pixelphotouploader.companion.app-packageDebugResources-3 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
+de.pixelphotouploader.companion.app-debug-4 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/build/intermediates/merged_res/debug/mergeDebugResources
+de.pixelphotouploader.companion.app-debug-5 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/src/debug/res
+de.pixelphotouploader.companion.app-main-6 /Users/family/Documents/Code/PixelPhotoUploader/Android-App/PixelPhotoCompanion/app/src/main/res

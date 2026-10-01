@@ -1,8 +1,13 @@
 # Pixel Photo Uploader — UmbrelOS-Port (App + Resilio)
 
-Gleiche Logik wie Windows `PixelPhotoUploader.ps1` 3.3.12, nur der
-**App + Resilio-Weg** (kein ADB, kein USB-Kabel). Die Windows-Variante eine
-Ebene hoeher bleibt unveraendert und wird parallel gepflegt.
+Gleiche Logik wie das eingefrorene Windows-Skript (`PixelPhotoUploader.ps1`
+3.3.12, siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/`), nur der
+**App + Resilio-Weg** (kein ADB, kein USB-Kabel). Container-Stand 3.3.14:
+Import über Dateisystemgrenzen (EXDEV-Fallback für Cloud-Mounts) plus
+Sync-Rest-Filter, dazu lineare Duplikatprüfung (Größen-Index), lineare
+Rückbeleg-Abrechnung (Suffix-Set) und Checkpoint-Saves bei großen Batches.
+Gepflegt wird nur noch der Container; die Windows-Variante ist archiviert
+(siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/` mit Migrationshinweis).
 
 Einrichtung, Zähler und "Jetzt synchronisieren" laufen im Web-UI der App —
 SSH ist im Regelbetrieb nicht noetig.
@@ -46,40 +51,43 @@ der PS1 auf Backslash + Kleinbuchstaben. Der Zeitstempel liegt im
 - `lastscan.json` haftet an einem `SourceRoot`: anderer Archivordner =>
   sofort Vollabgleich.
 
-## Resilio-Freigaben (einmalig)
+## Resilio-Freigabe (Ein-Ordner-Prinzip)
 
-| Freigabe | auf dem Pixel | im Container |
-| --- | --- | --- |
-| A — Uebergabe | `/storage/emulated/0/DCIM/ResilioInbox` (lesend) | `/data/staging` |
-| B — Rueckbelege | `/storage/emulated/0/Documents/PixelPhotoControl` | `/data/control` |
+Nur noch **ein einziger gemeinsamer Ordner** in Resilio Sync:
+
+| Freigabe | auf dem Pixel | auf dem Server (Umbrel) | im Container |
+| --- | --- | --- | --- |
+| **PixelSync** (bidirektional) | `/storage/emulated/0/DCIM/PixelSync` | `${APP_DATA_DIR}/data/pixelsync` | `/data/pixelsync` |
+
+Darin liegen automatisch zwei Unterordner:
+- `staging/WindowsBatches/` (wird vom Uploader befüllt; im Container als `/data/staging` eingebunden)
+- `control/` (Rückbelege `receipt-*.json` der Companion-App; im Container als `/data/control` eingebunden)
+
+Die Companion-App auf dem Pixel überwacht `/storage/emulated/0/DCIM/PixelSync`, scannt die Batches unter `staging`, ignoriert `control/` und `.sync/`, und schreibt nach Bestätigung durch Google Fotos den Rückbeleg in `/storage/emulated/0/DCIM/PixelSync/control`.
 
 Das Archiv (`/data/archive`) liegt **ausserhalb** der Freigaben: hierher wird
 nur sortiert, daraus wird nur kopiert. Geloescht werden ausschliesslich
 abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
-
-_ueber Freigabe B kommt auch `companion-log.txt` her: die Pixel-App schreibt
-dorthin ihr Protokoll, und die Statusseite zeigt es unter **Pixel meldet**.
-Damit ist auch ohne Kabel klar, warum die Freigabe-Automatik wartet.
 
 ## Installation auf umbrelOS
 
 1. Ordner `pixel-photo-uploader/` in den Community-App-Store legen (oder
    `~/umbrel/system/app-store/` bzw. per `umbrel-app-store`-Config).
 2. Das Image kommt aus dem Repository-Build (`.github/workflows/publish.yml`,
-   Tag `v3.3.12` -> `ghcr.io/ysamjo/pixel-photo-uploader:3.3.12`). In
+   Tag `v3.3.14` -> `ghcr.io/ysamjo/pixel-photo-uploader:3.3.14`). In
    `docker-compose.yml` steht der Digest des manifest lists, weil der offizielle
    Store kein `build:` zulaesst. Selbst nach einem Digest schauen:
 
    ```sh
-   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.12
-   # image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:<digest>
+   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+   # image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14@sha256:<digest>
    ```
 
    Zum Bauen ohne ghcr-Zugang: `docker buildx build --platform linux/amd64,linux/arm64
-   -t <registry>/pixel-photo-uploader:3.3.12 --push .`
+   -t <registry>/pixel-photo-uploader:3.3.14 --push .`
 
    Ohne Registry reicht auf dem Umbrel einmalig:
-   `docker build -t pixel-photo-uploader:3.3.12 .`
+   `docker build -t pixel-photo-uploader:3.3.14 .`
 3. App starten, im Web-UI **Einrichtung** oeffnen und die Pfade setzen
    (`/data/archive`, `/data/staging`, `/data/control`; Dropbox/Inbox leer
    lassen, wenn nichts importiert werden soll), dann **Speichern**.

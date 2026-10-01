@@ -106,6 +106,16 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
     if not removed:
         return 0
     lowered = [p.lower() for p in removed]
+    # Receipt paths end with the staged suffix (/WindowsBatches/<id>/<name>). One
+    # rfind per receipt replaces staged x receipts endswith checks; rfind (not find)
+    # keeps the semantics identical to endswith because neither batch id nor staged
+    # name can contain a second anchor.
+    anchor = ("/" + APP_BATCH_FOLDER + "/").lower()
+    hit_suffixes: set[str] = set()
+    for path in lowered:
+        at = path.rfind(anchor)
+        if at >= 0:
+            hit_suffixes.add(path[at:])
     fps, hashes = load_completion_sets()
     remaining: list[dict] = []
     confirmed_by_batch: dict[str, list[dict]] = {}
@@ -120,7 +130,7 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
             if batch_id:
                 unconfirmed_by_batch.setdefault(batch_id, []).append(entry)
             continue
-        if any(p.endswith(suffix.lower()) for p in lowered):
+        if suffix.lower() in hit_suffixes:
             add_completion(entry, fps, hashes, "Android receipt after confirmed Google Photos free-up")
             done += 1
             if batch_id:
@@ -240,27 +250,32 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     staging_root = Path(str(cfg["StagingRoot"]))
     d = batch_dir(staging_root, batch_id)
     new_records: list[dict] = []
-    for i, entry in enumerate(selected, start=1):
-        ext = Path(str(entry["RelativePath"])).suffix.lower()
-        staged_name = f"{i:06d}-{str(entry['Fingerprint'])[:12]}{ext}"
-        suffix = f"/{APP_BATCH_FOLDER}/{batch_id}/{staged_name}"
-        rec = {
-            "Fingerprint": str(entry["Fingerprint"]), "Sha256": str(entry.get("Sha256", "")),
-            "RelativePath": str(entry["RelativePath"]), "Size": str(entry.get("Size", "")),
-            "RemotePath": suffix, "BatchId": batch_id, "StagedName": staged_name,
-            "PixelSuffix": suffix, "State": "Copying", "StagedUtc": "",
-        }
-        new_records.append(rec)
-        save_staged(staged + new_records, staged_file)
-        try:
+    try:
+        for i, entry in enumerate(selected, start=1):
+            ext = Path(str(entry["RelativePath"])).suffix.lower()
+            staged_name = f"{i:06d}-{str(entry['Fingerprint'])[:12]}{ext}"
+            suffix = f"/{APP_BATCH_FOLDER}/{batch_id}/{staged_name}"
+            rec = {
+                "Fingerprint": str(entry["Fingerprint"]), "Sha256": str(entry.get("Sha256", "")),
+                "RelativePath": str(entry["RelativePath"]), "Size": str(entry.get("Size", "")),
+                "RemotePath": suffix, "BatchId": batch_id, "StagedName": staged_name,
+                "PixelSuffix": suffix, "State": "Copying", "StagedUtc": "",
+            }
+            new_records.append(rec)
             write_log(f"Handing over via Resilio folder: {entry.get('RelativePath')}")
             copy_to_batch(archive / str(entry["RelativePath"]), d, staged_name)
             rec["State"] = "Staged"
             rec["StagedUtc"] = datetime.now(timezone.utc).isoformat()
-            save_staged(staged + new_records, staged_file)
-        except Exception as exc:
-            write_log(f"Transfer failed ({entry.get('RelativePath')}): {exc}", "ERROR")
-            raise
+            # Crash-resume checkpoint, not every file: a 900-file batch wrote
+            # staged.json ~1800 times. Lost tail entries are simply re-selected
+            # next run (their fingerprints are not completed), never lost.
+            if i % 25 == 0:
+                save_staged(staged + new_records, staged_file)
+    except Exception as exc:
+        save_staged(staged + new_records, staged_file)
+        write_log(f"Transfer failed: {exc}", "ERROR")
+        raise
+    save_staged(staged + new_records, staged_file)
     write_batch_markers(staging_root, batch_id, selected)
     write_log(f"Batch ready in handover folder: {d}", "OK")
     return len(selected)

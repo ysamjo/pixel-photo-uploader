@@ -101,3 +101,46 @@ def test_katalogzeile_ohne_fingerabdruck_knackt_nicht(tmp_path, monkeypatch):
         "pic.jpg,100,2024-01-01T00:00:00.0000000Z,True,\n", encoding="utf-8")
     store.save_staged([], staged_file)
     assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+
+
+def test_confirm_matches_absolute_pixel_paths_and_keeps_adb_entries(tmp_path, monkeypatch):
+    """Suffix-Set statt staged x receipts endswith: echte absolute Pixel-Pfade,
+    bloße Suffixe, unpassende Belege und suffixlose ADB-Einträge."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    for name in ("a.jpg", "b.jpg"):
+        (Path(cfg["SourceRoot"]) / name).write_bytes(os_bytes(name))
+    store.save_catalog([{
+        "Fingerprint": f"fp-{n}", "RelativePath": n, "Size": str(len(os_bytes(n))),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    } for n in ("a.jpg", "b.jpg")], catalog_file)
+    store.save_staged([], staged_file)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 2
+    staged = store.load_staged(staged_file)
+    first, second = staged
+    absolute = "/storage/emulated/0/DCIM/PixelSync/staging" + first["PixelSuffix"]
+    (Path(cfg["ControlRoot"]) / "receipt-abs.json").write_text(json.dumps({
+        "version": 1, "removedPaths": [absolute]}))
+    (Path(cfg["ControlRoot"]) / "receipt-noise.json").write_text(json.dumps({
+        "version": 1, "removedPaths": ["/storage/emulated/0/DCIM/Camera/IMG_x.jpg"]}))
+    adb_entry = dict(second)
+    adb_entry["PixelSuffix"] = ""
+    store.save_staged([first, adb_entry], staged_file)
+    assert batches.confirm_staged(cfg, staged_file) == 1
+    rest = store.load_staged(staged_file)
+    assert [e["RelativePath"] for e in rest] == [second["RelativePath"]]
+
+
+def test_staging_checkpoint_writes_all_states(tmp_path, monkeypatch):
+    """Checkpoint alle 25 Dateien + Schlusssave: 30 Dateien, alle Staged."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    names = [f"p{i:03d}.jpg" for i in range(30)]
+    for n in names:
+        (Path(cfg["SourceRoot"]) / n).write_bytes(os_bytes(n))
+    store.save_catalog([{
+        "Fingerprint": f"fp-{n}", "RelativePath": n, "Size": str(len(os_bytes(n))),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    } for n in names], catalog_file)
+    store.save_staged([], staged_file)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 30
+    staged = store.load_staged(staged_file)
+    assert len(staged) == 30 and all(e["State"] == "Staged" for e in staged)

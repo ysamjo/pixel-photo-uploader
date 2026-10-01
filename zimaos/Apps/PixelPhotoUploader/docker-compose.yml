@@ -1,0 +1,75 @@
+name: pixel-photo-uploader
+
+services:
+  server:
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+    restart: unless-stopped
+    ports:
+      - target: 8000
+        published: ${WEBUI_PORT:-8000}
+        protocol: tcp
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      # Archiv: hierher wird nur sortiert, daraus wird nur kopiert.
+      - /DATA/Media/Photos/Archiv:/data/archive
+      # Ein-Ordner-Prinzip: genau dieser Ordner wird per Resilio mit dem Pixel geteilt.
+      - /DATA/AppData/pixel-photo-uploader/pixelsync:/data/pixelsync
+      - /DATA/AppData/pixel-photo-uploader/pixelsync/staging:/data/staging
+      - /DATA/AppData/pixel-photo-uploader/pixelsync/control:/data/control
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      # Optionale Importquellen (im Web-Setup leer lassen = kein Import).
+      # Empfohlen: lokale Spiegel-Ordner, die per ZimaOS-Dateibrowser oder
+      # Sync-Auftrag aus OneDrive/Dropbox befuellt werden (siehe README).
+      - /DATA/Media/Photos/_eingang-dropbox:/data/dropbox
+      - /DATA/Media/Photos/_eingang-inbox:/data/inbox
+      # Alternative: Cloud-Mounts direkt einhaengen (Hostpfad aus dem
+      # ZimaOS-Dateibrowser übernehmen, Schreibrechte nötig):
+      # - /media/OneDrive/Camera Uploads:/data/dropbox
+      # - /media/OneDrive/Eigene Aufnahmen:/data/inbox
+
+  watcher:
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+    restart: unless-stopped
+    command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - /DATA/Media/Photos/Archiv:/data/archive
+      - /DATA/AppData/pixel-photo-uploader/pixelsync:/data/pixelsync
+      - /DATA/AppData/pixel-photo-uploader/pixelsync/staging:/data/staging
+      - /DATA/AppData/pixel-photo-uploader/pixelsync/control:/data/control
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      - /DATA/Media/Photos/_eingang-dropbox:/data/dropbox
+      - /DATA/Media/Photos/_eingang-inbox:/data/inbox
+
+x-casaos:
+  id: io.github.ysamjo.pixel-photo-uploader
+  main: server
+  index: /
+  port_map: ${WEBUI_PORT:-8000}
+  scheme: http
+  icon: https://raw.githubusercontent.com/ysamjo/pixel-photo-uploader/main/zimaos/Apps/PixelPhotoUploader/icon.svg
+  title:
+    en_US: Pixel Photo Uploader
+    de_DE: Pixel Photo Uploader
+  tagline:
+    en_US: Sort photo archive and hand batches to a Pixel phone for Google Photos upload
+    de_DE: Foto-Archiv sortieren und per Pixel-App nach Google Fotos übergeben
+  description:
+    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, no ADB, no USB cable). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
+    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, kein ADB, kein USB-Kabel). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
+  author: family
+  developer: family
+  category: Media
+  architectures:
+    - amd64
+    - arm64
+  version: "3.3.14"
+  update_at: "2026-09-28"
+  release_notes:
+    en_US: ZimaOS packaging; cross-filesystem import fix; linear import-dedup and receipt-confirm speedups.
+    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung.
+  website: https://github.com/ysamjo/pixel-photo-uploader
+  repo: https://github.com/ysamjo/pixel-photo-uploader
+  support: https://github.com/ysamjo/pixel-photo-uploader/issues

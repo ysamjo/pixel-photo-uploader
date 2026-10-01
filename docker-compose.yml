@@ -1,8 +1,11 @@
 services:
   server:
-    # Built by .github/workflows/publish.yml from tag v3.3.12. The digest is the
-    # multi-arch index (linux/amd64 + linux/arm64), which the App Store requires.
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:d4234fa1f35fe0c4afff79558c32db15d20d59f61e4b1ab510a00396d0d1cf19
+    # Built by .github/workflows/publish.yml from tag v3.3.14 (multi-arch
+    # index linux/amd64 + linux/arm64, which the App Store requires).
+    # After the tag build, re-pin the digest:
+    #   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+    # and append @sha256:<digest> to the image below.
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     init: true
     restart: on-failure
@@ -13,15 +16,16 @@ services:
       # The archive is only ever copied from; deletions happen inside the batch
       # folders below staging/, never below archive/.
       - "${APP_DATA_DIR}/data/archive:/data/archive"
-      - "${APP_DATA_DIR}/data/staging:/data/staging"
-      - "${APP_DATA_DIR}/data/control:/data/control"
+      - "${APP_DATA_DIR}/data/pixelsync:/data/pixelsync"
+      - "${APP_DATA_DIR}/data/pixelsync/staging:/data/staging"
+      - "${APP_DATA_DIR}/data/pixelsync/control:/data/control"
       - "${APP_DATA_DIR}/data/state:/data/state"
       # Optional import sources (uncomment and set the paths in the web setup):
       # - "${APP_DATA_DIR}/data/dropbox:/data/dropbox"
       # - "${APP_DATA_DIR}/data/inbox:/data/inbox"
 
   watcher:
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.12@sha256:d4234fa1f35fe0c4afff79558c32db15d20d59f61e4b1ab510a00396d0d1cf19
+    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     init: true
     restart: on-failure
@@ -30,8 +34,9 @@ services:
       PPU_STATE_DIR: /data/state
     volumes:
       - "${APP_DATA_DIR}/data/archive:/data/archive"
-      - "${APP_DATA_DIR}/data/staging:/data/staging"
-      - "${APP_DATA_DIR}/data/control:/data/control"
+      - "${APP_DATA_DIR}/data/pixelsync:/data/pixelsync"
+      - "${APP_DATA_DIR}/data/pixelsync/staging:/data/staging"
+      - "${APP_DATA_DIR}/data/pixelsync/control:/data/control"
       - "${APP_DATA_DIR}/data/state:/data/state"
 
   app_proxy:

@@ -16,7 +16,7 @@ DEFAULTS: dict = {
     "StagingRoot": "",
     "ControlRoot": "",
     "ResilioEnabled": False,
-    "ResilioRemoteRoot": "/sdcard/DCIM/ResilioInbox",
+    "ResilioRemoteRoot": "/sdcard/DCIM/PixelSync",
     "KeepAwake": True,
     "RequireUnlocked": True,
     "ImportEnabled": False,
@@ -55,6 +55,12 @@ def _validate_roots(cfg: dict) -> None:
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
             a, b = names[i], names[j]
+            # 1-folder sync principle: ControlRoot may be a subfolder of StagingRoot (e.g. /data/pixelsync/control)
+            if (a == "ControlRoot" and b == "StagingRoot") or (a == "StagingRoot" and b == "ControlRoot"):
+                if roots[a] == roots[b]:
+                    raise ValueError(
+                        f"Folders '{a}' and '{b}' must not be equal (use e.g. a 'control' subfolder).")
+                continue
             if roots[a] == roots[b] or roots[a].is_relative_to(roots[b]) \
                     or roots[b].is_relative_to(roots[a]):
                 raise ValueError(

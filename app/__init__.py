@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_VERSION = "3.3.12"
+APP_VERSION = "3.3.14"
 APP_BATCH_FOLDER = "WindowsBatches"  # keep name: Pixel app expects it
 
 MIN_BATCH_GIB = 0.25

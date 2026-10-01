@@ -35,9 +35,8 @@ def cmd_setup() -> None:
         for err in result["errors"]:
             print(f"  - {err}")
         raise SystemExit("Setup aborted; nothing saved.")
-    print("Pixel steps: handover share -> /storage/emulated/0/DCIM/ResilioInbox "
-          "(read-only), control folder /storage/emulated/0/Documents/PixelPhotoControl "
-          "-> this control dir.")
+    print("Pixel steps: share ONE folder via Resilio (e.g. /storage/emulated/0/DCIM/PixelSync);")
+    print("the uploader fills staging/WindowsBatches below it and reads receipts from control/.")
 
 
 def main(argv: list[str] | None = None) -> None:

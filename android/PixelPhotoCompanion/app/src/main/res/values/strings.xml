@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Pixel Photo Companion</string>
+    <string name="accessibility_description">Liest ausschließlich die Google-Fotos-Oberfläche, erkennt den Sicherungsstatus und betätigt nach Sicherheitsprüfungen „Speicherplatz freigeben“.</string>
+</resources>
