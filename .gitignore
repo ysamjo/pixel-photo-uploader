@@ -17,3 +17,6 @@ android/PixelPhotoCompanion/.gradle/
 android/PixelPhotoCompanion/build/
 android/PixelPhotoCompanion/app/build/
 *.apk
+
+# Paket- und Build-Ergebnisse
+*.tar.gz
