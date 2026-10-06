@@ -7,8 +7,8 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (BULK_PATH_LIMIT, SCAN_PRUNE_GRACE_HOURS, catalog_path, completed_path,
-               lastscan_path, staged_path)
+from . import (BULK_PATH_LIMIT, SCAN_PRUNE_GRACE_HOURS, blocked_path, catalog_path,
+               completed_path, lastscan_path, staged_path)
 from .fingerprints import fingerprint, is_supported_media, win_roundtrip_utc
 from .media import is_file_ready
 from .util import write_log
@@ -16,6 +16,8 @@ from .util import write_log
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
 CATALOG_FIELDS = ["Fingerprint", "RelativePath", "Size", "LastWriteUtc", "Stable", "Sha256"]
 COMPLETED_FIELDS = ["Fingerprint", "Sha256", "RelativePath", "Size", "CompletedUtc", "Reason"]
+BLOCKED_FIELDS = ["Fingerprint", "Sha256", "RelativePath", "Size", "BatchId",
+                  "StagedUtc", "BlockedUtc", "Reason"]
 
 
 def _parse_iso(value: str) -> datetime:
@@ -108,6 +110,54 @@ def add_completion(entry: dict, fps: set[str], hashes: set[str], reason: str,
     if row["Sha256"]:
         hashes.add(row["Sha256"].lower())
     return True
+
+
+def load_blocked(path: Path | None = None) -> list[dict]:
+    p = path or blocked_path()
+    if not p.exists():
+        return []
+    with p.open(newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def blocked_fingerprints(path: Path | None = None) -> set[str]:
+    return {str(row.get("Fingerprint", "")).lower() for row in load_blocked(path)
+            if str(row.get("Fingerprint", "")).strip()}
+
+
+def append_blocked(entries: list[dict], reason: str, path: Path | None = None) -> int:
+    """Record handover entries that leave the retry loop; the archive copy stays."""
+    p = path or blocked_path()
+    rows = load_blocked(p)
+    known = {str(row.get("Fingerprint", "")).lower() for row in rows}
+    stamped = datetime.now(timezone.utc).isoformat()
+    added = 0
+    for entry in entries:
+        fp = str(entry.get("Fingerprint", "")).strip()
+        if not fp or fp.lower() in known:
+            continue
+        known.add(fp.lower())
+        rows.append({
+            "Fingerprint": fp,
+            "Sha256": str(entry.get("Sha256", "")),
+            "RelativePath": str(entry.get("RelativePath", "")),
+            "Size": str(entry.get("Size", "")),
+            "BatchId": str(entry.get("BatchId", "")),
+            "StagedUtc": str(entry.get("StagedUtc", "")),
+            "BlockedUtc": stamped,
+            "Reason": reason,
+        })
+        added += 1
+    if not added:
+        return 0
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=BLOCKED_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    tmp.replace(p)
+    return added
 
 
 def _parse_utc(value) -> datetime:

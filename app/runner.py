@@ -50,8 +50,26 @@ def holder() -> str:
     return str(data.get("reason", "run"))
 
 
-def _pid_alive(pid: int) -> bool:
+def _proc_starttime(pid: int) -> int:
+    """Clock ticks since boot when the process started, -1 when unknown.
+
+    A container restart hands pid 1 out again, so the number alone says nothing
+    about whether the lock's writer is still the same process.
+    """
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return -1
+
+
+def _pid_alive(pid: int, started: int | None = None) -> bool:
     if pid <= 0:
+        return False
+    # A lock without a recorded start time cannot prove its holder is the
+    # process that now answers to that pid - after a container restart the pid
+    # is handed out again, typically as pid 1.
+    if started is None:
         return False
     try:
         os.kill(pid, 0)
@@ -61,6 +79,10 @@ def _pid_alive(pid: int) -> bool:
         return True
     except (OSError, OverflowError, ValueError):
         return False
+    if started != -1:
+        current = _proc_starttime(pid)
+        if current != -1 and current != started:
+            return False
     return True
 
 
@@ -78,7 +100,9 @@ def acquire(reason: str = "run", path: Path | None = None) -> bool:
     if current:
         taken = _utc(current.get("takenUtc"))
         fresh = datetime.now(timezone.utc) - taken < LOCK_STALE
-        alive = _pid_alive(_as_pid(current.get("pid")))
+        raw_started = current.get("started")
+        alive = _pid_alive(_as_pid(current.get("pid")),
+                           None if raw_started is None else _as_pid(raw_started))
         if fresh and alive:
             return False
         write_log(f"Lock of '{current.get('reason', '?')}' from {taken:%Y-%m-%d %H:%M} "
@@ -92,14 +116,19 @@ def acquire(reason: str = "run", path: Path | None = None) -> bool:
     except FileExistsError:
         return False
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump({"pid": os.getpid(), "reason": reason,
+        json.dump({"pid": os.getpid(), "started": _proc_starttime(os.getpid()),
+                   "reason": reason,
                    "takenUtc": datetime.now(timezone.utc).isoformat()}, fh)
     return True
 
 
 def release(path: Path | None = None) -> None:
     p = path or lock_path()
-    if _read(p).get("pid") == os.getpid():
+    data = _read(p)
+    mine = data.get("pid") == os.getpid()
+    if mine and _as_pid(data.get("started")) != -1:
+        mine = _as_pid(data.get("started")) == _proc_starttime(os.getpid())
+    if mine:
         try:
             p.unlink()
         except OSError:

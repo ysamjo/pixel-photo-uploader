@@ -147,31 +147,43 @@ def move_media_file(source: Path, folder: Path, reason: str,
 def run_import(cfg: dict) -> dict:
     if not cfg.get("ImportEnabled"):
         return {"moved": 0, "duplicates": 0, "archive_paths": []}
-    dropbox = Path(str(cfg["DropboxRoot"]))
     inbox = Path(str(cfg["InboxRoot"]))
     archive = Path(str(cfg["SourceRoot"]))
-    for p in (dropbox, inbox, archive):
+    for p in (inbox, archive):
         if not p.is_dir():
             raise FileNotFoundError(f"Import folder not reachable: {p}")
+
+    cloud_sources: list[tuple[Path, str]] = []
+    if cfg.get("DropboxRoot"):
+        cloud_sources.append((Path(str(cfg["DropboxRoot"])), "Dropbox"))
+    if cfg.get("OneDriveRoot"):
+        cloud_sources.append((Path(str(cfg["OneDriveRoot"])), "OneDrive"))
+
+    for p, name in cloud_sources:
+        if not p.is_dir():
+            raise FileNotFoundError(f"Import folder not reachable: {p}")
+
     stable_before = datetime.now(timezone.utc) - timedelta(
         minutes=float(cfg.get("StableMinutes", 2.0)))
     moved, dups = 0, 0
     archive_paths: list[str] = []
-
-    write_log("Importing stable media from Dropbox to inbox ...")
-    sweep_started = time.monotonic()
+    sweep_seconds = 0.0
     index = _DestinationIndex()
-    for f in sorted(dropbox.rglob("*")):
-        if not f.is_file() or f.is_symlink() or not is_supported_media(f):
-            continue
-        if is_ignorable(f):
-            continue
-        if not is_file_ready(f, stable_before):
-            continue
-        result, _ = move_media_file(f, inbox, "Dropbox -> Inbox", index)
-        moved += 1 if result == "Moved" else 0
-        dups += 1 if result == "Duplicate" else 0
-    sweep_seconds = time.monotonic() - sweep_started
+
+    for folder, name in cloud_sources:
+        write_log(f"Importing stable media from {name} to inbox ...")
+        sweep_started = time.monotonic()
+        for f in sorted(folder.rglob("*")):
+            if not f.is_file() or f.is_symlink() or not is_supported_media(f):
+                continue
+            if is_ignorable(f):
+                continue
+            if not is_file_ready(f, stable_before):
+                continue
+            result, _ = move_media_file(f, inbox, f"{name} -> Inbox", index)
+            moved += 1 if result == "Moved" else 0
+            dups += 1 if result == "Duplicate" else 0
+        sweep_seconds += time.monotonic() - sweep_started
 
     write_log("Sorting inbox ...")
     sort_started = time.monotonic()
@@ -194,6 +206,7 @@ def run_import(cfg: dict) -> dict:
         else:
             dups += 1
     sort_seconds = time.monotonic() - sort_started
+    sweep_desc = " / ".join(f"{name} sweep" for _, name in cloud_sources) if cloud_sources else "Sweep"
     write_log(f"Import/sort done: {moved} moved, {dups} SHA-256 duplicates removed. "
-              f"Dropbox sweep {sweep_seconds:.1f} s, sorting {sort_seconds:.1f} s.", "OK")
+              f"{sweep_desc} {sweep_seconds:.1f} s, sorting {sort_seconds:.1f} s.", "OK")
     return {"moved": moved, "duplicates": dups, "archive_paths": archive_paths}

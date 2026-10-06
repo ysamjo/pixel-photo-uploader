@@ -1,0 +1,42 @@
+# Lokale Entwicklung und Tests fuer pixel-photo-uploader (macOS, Linux, Windows).
+#
+#   docker compose -f docker-compose.local.yml up -d --build
+#
+# Die Daten landen im data/-Ordner neben diesem Projekt.
+# Web-UI laeuft auf: http://localhost:8000
+
+name: pixel-photo-uploader-local
+
+services:
+  server:
+    build: .
+    image: pixel-photo-uploader:3.3.14
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - ./data/archive:/data/archive
+      - ./data/staging:/data/staging
+      - ./data/control:/data/control
+      - ./data/state:/data/state
+      - ./data/dropbox:/data/dropbox
+      - ./data/onedrive:/data/onedrive
+      - ./data/inbox:/data/inbox
+
+  watcher:
+    build: .
+    image: pixel-photo-uploader:3.3.14
+    restart: unless-stopped
+    command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - ./data/archive:/data/archive
+      - ./data/staging:/data/staging
+      - ./data/control:/data/control
+      - ./data/state:/data/state
+      - ./data/dropbox:/data/dropbox
+      - ./data/onedrive:/data/onedrive
+      - ./data/inbox:/data/inbox

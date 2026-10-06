@@ -1,45 +1,82 @@
+# Pixel Photo Uploader als Container auf ZimaOS.
+#
+# Diese Datei ist fuer den App-Manager von ZimaOS gedacht: im Web-Interface
+# unter "Install a customized app" den Inhalt einfuegen.
+#
+# Fuer lokale Entwicklung oder Tests auf einem normalen Docker-Host (macOS, Linux, Windows)
+# gibt es stattdessen docker-compose.local.yml:
+#   docker compose -f docker-compose.local.yml up -d --build
+
+name: pixel-photo-uploader
+
 services:
   server:
-    # Built by .github/workflows/publish.yml from tag v3.3.14 (multi-arch
-    # index linux/amd64 + linux/arm64, which the App Store requires).
-    # After the tag build, re-pin the digest:
-    #   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
-    # and append @sha256:<digest> to the image below.
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
-    user: "${APP_UID:-1000}:${APP_GID:-1000}"
-    init: true
-    restart: on-failure
+    image: pixel-photo-uploader:3.3.14
+    restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - target: 8000
+        published: "8088"
+        protocol: tcp
     environment:
       PPU_STATE_DIR: /data/state
     volumes:
-      # The archive is only ever copied from; deletions happen inside the batch
-      # folders below staging/, never below archive/.
-      - "${APP_DATA_DIR}/data/archive:/data/archive"
-      - "${APP_DATA_DIR}/data/pixelsync:/data/pixelsync"
-      - "${APP_DATA_DIR}/data/pixelsync/staging:/data/staging"
-      - "${APP_DATA_DIR}/data/pixelsync/control:/data/control"
-      - "${APP_DATA_DIR}/data/state:/data/state"
-      # Optional import sources (uncomment and set the paths in the web setup):
-      # - "${APP_DATA_DIR}/data/dropbox:/data/dropbox"
-      # - "${APP_DATA_DIR}/data/inbox:/data/inbox"
+      # Archiv: hierher wird nur sortiert, daraus wird nur kopiert.
+      - /DATA/Media/Photos/Archiv:/data/archive
+      # Ein-Ordner-Prinzip: genau dieser Ordner wird per Resilio mit dem Pixel geteilt.
+      # Er liegt in Resilios Sync-Wurzel (/sync), damit die Sync-App ihn überhaupt sehen kann.
+      - /DATA/AppData/resilio-sync/data/pixelsync:/data/pixelsync
+      - /DATA/AppData/resilio-sync/data/pixelsync/staging:/data/staging
+      - /DATA/AppData/resilio-sync/data/pixelsync/control:/data/control
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      # Cloud-Eingaenge (Dropbox + OneDrive) und lokaler Eingang:
+      - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
+      - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
+      - /DATA/Media/Photos/_eingang-inbox:/data/inbox
 
   watcher:
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
-    user: "${APP_UID:-1000}:${APP_GID:-1000}"
-    init: true
-    restart: on-failure
+    image: pixel-photo-uploader:3.3.14
+    restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
       PPU_STATE_DIR: /data/state
     volumes:
-      - "${APP_DATA_DIR}/data/archive:/data/archive"
-      - "${APP_DATA_DIR}/data/pixelsync:/data/pixelsync"
-      - "${APP_DATA_DIR}/data/pixelsync/staging:/data/staging"
-      - "${APP_DATA_DIR}/data/pixelsync/control:/data/control"
-      - "${APP_DATA_DIR}/data/state:/data/state"
+      - /DATA/Media/Photos/Archiv:/data/archive
+      - /DATA/AppData/resilio-sync/data/pixelsync:/data/pixelsync
+      - /DATA/AppData/resilio-sync/data/pixelsync/staging:/data/staging
+      - /DATA/AppData/resilio-sync/data/pixelsync/control:/data/control
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
+      - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
+      - /DATA/Media/Photos/_eingang-inbox:/data/inbox
 
-  app_proxy:
-    environment:
-      APP_HOST: pixel-photo-uploader_server_1
-      APP_PORT: "8000"
+x-casaos:
+  id: io.github.ysamjo.pixel-photo-uploader
+  main: server
+  index: /
+  port_map: "8088"
+  scheme: http
+  icon: https://raw.githubusercontent.com/ysamjo/pixel-photo-uploader/main/zimaos/Apps/PixelPhotoUploader/icon.svg
+  title:
+    en_US: Pixel Photo Uploader
+    de_DE: Pixel Photo Uploader
+  tagline:
+    en_US: Sort photo archive and hand batches to a Pixel phone for Google Photos upload
+    de_DE: Foto-Archiv sortieren und per Pixel-App nach Google Fotos übergeben
+  description:
+    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, no ADB, no USB cable). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
+    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, kein ADB, kein USB-Kabel). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
+  author: family
+  developer: family
+  category: Media
+  architectures:
+    - amd64
+    - arm64
+  version: "3.3.14"
+  update_at: "2026-09-28"
+  release_notes:
+    en_US: ZimaOS packaging; cross-filesystem import fix; linear import-dedup and receipt-confirm speedups.
+    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung.
+  website: https://github.com/ysamjo/pixel-photo-uploader
+  repo: https://github.com/ysamjo/pixel-photo-uploader
+  support: https://github.com/ysamjo/pixel-photo-uploader/issues

@@ -18,10 +18,11 @@ def _ask(prompt: str, default: str = "") -> str:
 
 def cmd_setup() -> None:
     print("Pixel Photo Uploader - Setup (Umbrel / Linux, App + Resilio)")
-    print("Dropbox/Inbox are optional: leave empty to disable the import step.")
+    print("Dropbox/OneDrive/Inbox are optional: leave empty to disable the import step.")
     values = {
         "DropboxRoot": _ask("Dropbox 'Camera Uploads' dir (empty = off)"),
-        "InboxRoot": _ask("Inbox 'Eigene Aufnahmen' dir (empty = off)"),
+        "OneDriveRoot": _ask("OneDrive 'Eigene Aufnahmen' dir (empty = off)"),
+        "InboxRoot": _ask("Inbox dir (empty = off)"),
         "SourceRoot": _ask("Archive dir (e.g. /data/archive)", "/data/archive"),
         "StagingRoot": _ask("Empty Resilio handover dir", "/data/staging"),
         "ControlRoot": _ask("Receipt dir synced from Pixel", "/data/control"),
@@ -29,6 +30,7 @@ def cmd_setup() -> None:
         "StableSeconds": _ask("Stability wait seconds", "120"),
         "RescanMinutes": _ask("Archive check every minutes", "360"),
         "DeepRescanDays": _ask("Full archive pass every days", "7"),
+        "BackupTimeoutHours": _ask("Hours without a receipt before dropping a file", "72"),
     }
     result = apply_setup(values)
     if not result["ok"]:
@@ -36,7 +38,7 @@ def cmd_setup() -> None:
             print(f"  - {err}")
         raise SystemExit("Setup aborted; nothing saved.")
     print("Pixel steps: share ONE folder via Resilio (e.g. /storage/emulated/0/DCIM/PixelSync);")
-    print("the uploader fills staging/WindowsBatches below it and reads receipts from control/.")
+    print("the uploader fills staging/Batches below it and reads receipts from control/.")
 
 
 def main(argv: list[str] | None = None) -> None:

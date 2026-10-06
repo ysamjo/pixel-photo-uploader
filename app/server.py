@@ -31,18 +31,22 @@ def _esc(value) -> str:
 
 def overview(cfg: dict) -> dict:
     """Status numbers without printing (shared by CLI and web)."""
-    from .batches import batch_gib_clamped
-    from .store import load_catalog, load_completion_sets, load_staged
+    from .batches import backup_timeout_hours, batch_gib_clamped
+    from .store import (blocked_fingerprints, load_catalog, load_completion_sets,
+                        load_staged)
     from .sync import deep_rescan_days
 
     catalog = load_catalog()
     fps, _ = load_completion_sets()
+    blocked = blocked_fingerprints()
     stable_open = [e for e in catalog
                    if str(e.get("Stable")) == "True"
-                   and str(e.get("Fingerprint", "")).lower() not in fps]
+                   and str(e.get("Fingerprint", "")).lower() not in fps
+                   and str(e.get("Fingerprint", "")).lower() not in blocked]
     stable_seconds = int(float(cfg.get("StableMinutes", 2.0)) * 60)
     setup = {
         "DropboxRoot": str(cfg.get("DropboxRoot", "")),
+        "OneDriveRoot": str(cfg.get("OneDriveRoot", "")),
         "InboxRoot": str(cfg.get("InboxRoot", "")),
         "SourceRoot": str(cfg.get("SourceRoot", "")),
         "StagingRoot": str(cfg.get("StagingRoot", "")),
@@ -51,6 +55,7 @@ def overview(cfg: dict) -> dict:
         "StableSeconds": str(stable_seconds),
         "RescanMinutes": str(int(cfg.get("RescanMinutes", 360))),
         "DeepRescanDays": str(int(deep_rescan_days(cfg))),
+        "BackupTimeoutHours": f"{backup_timeout_hours(cfg):g}",
     }
     return {
         "version": APP_VERSION,
@@ -63,9 +68,11 @@ def overview(cfg: dict) -> dict:
         "stable_seconds": stable_seconds,
         "rescan_minutes": int(cfg.get("RescanMinutes", 360)),
         "deep_rescan_days": deep_rescan_days(cfg),
+        "backup_timeout_hours": backup_timeout_hours(cfg),
         "catalog_files": len(catalog),
         "completed": len(fps),
         "staged": len(load_staged()),
+        "blocked": len(blocked),
         "open_stable": len(stable_open),
         "open_bytes": sum(int(e.get("Size", 0) or 0) for e in stable_open),
         "running": runner.holder(),
@@ -123,18 +130,21 @@ SETUP_FIELDS = (
     ("SourceRoot", "Archiv-Ordner (von hier wird nur kopiert)", True),
     ("StagingRoot", "Uebergabe-Ordner (Resilio-Freigabe A)", True),
     ("ControlRoot", "Rueckbeleg-Ordner (Resilio-Freigabe B)", True),
+    ("InboxRoot", "Inbox-Ordner (lokaler Eingang)", False),
     ("DropboxRoot", "Dropbox-Ordner (leer = kein Import)", False),
-    ("InboxRoot", "Inbox-Ordner (leer = kein Import)", False),
+    ("OneDriveRoot", "OneDrive-Ordner (leer = kein Import)", False),
     ("BatchGiB", "Batch-groesse in GiB (0,25 bis 10)", False),
     ("StableSeconds", "Stabilitaet in Sekunden", False),
     ("RescanMinutes", "Grundabgleich alle Minuten", False),
     ("DeepRescanDays", "Vollabgleich alle Tage", False),
+    ("BackupTimeoutHours", "Abbruch nach Stunden ohne Rueckbeleg (1 bis 720)", False),
 )
 SETUP_DEFAULTS = {
     "SourceRoot": "/data/archive", "StagingRoot": "/data/staging",
-    "ControlRoot": "/data/control", "DropboxRoot": "", "InboxRoot": "",
+    "ControlRoot": "/data/control", "InboxRoot": "/data/inbox",
+    "DropboxRoot": "/data/dropbox", "OneDriveRoot": "/data/onedrive",
     "BatchGiB": "5", "StableSeconds": "120", "RescanMinutes": "360",
-    "DeepRescanDays": "7",
+    "DeepRescanDays": "7", "BackupTimeoutHours": "72",
 }
 
 
@@ -156,12 +166,14 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"<li><b>{_number(info.get('open_stable'))}</b>offen ({_gib(info.get('open_bytes'))})</li>"
             f"<li><b>{_number(info.get('staged'))}</b>auf dem Pixel</li>"
             f"<li><b>{_number(info.get('completed'))}</b>abgeschlossen</li>"
+            f"<li><b>{_number(info.get('blocked'))}</b>blockiert</li>"
         )
         settings = (
             f"Grundabgleich: alle {_number(info.get('rescan_minutes'))} min &middot; "
             f"Vollabgleich: alle {_num(info.get('deep_rescan_days'))} Tage &middot; "
             f"Stabilitaet: {_number(info.get('stable_seconds'))} s &middot; "
-            f"Batch: {_num(info.get('batch_gib'))} GiB"
+            f"Batch: {_num(info.get('batch_gib'))} GiB &middot; "
+            f"Abbruch: nach {_num(info.get('backup_timeout_hours'))} h ohne Beleg"
         )
         status_section = (
             f"<section><ul>{counters}</ul>"

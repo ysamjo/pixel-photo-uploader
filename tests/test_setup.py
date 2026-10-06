@@ -6,7 +6,7 @@ from app.setup import apply_setup
 
 def _values(tmp_path, **over) -> dict:
     v = {
-        "DropboxRoot": "", "InboxRoot": "",
+        "DropboxRoot": "", "OneDriveRoot": "", "InboxRoot": "",
         "SourceRoot": str(tmp_path / "archive"),
         "StagingRoot": str(tmp_path / "staging"),
         "ControlRoot": str(tmp_path / "control"),
@@ -25,7 +25,17 @@ def test_gueltiges_setup_schreibt_config_und_leggt_ordner_an(tmp_path, monkeypat
     assert cfg["SourceRoot"] == str(tmp_path / "archive")
     assert cfg["StableMinutes"] == 2.0
     assert cfg["ImportEnabled"] is False
-    assert (tmp_path / "staging" / "WindowsBatches").is_dir()
+    assert (tmp_path / "staging" / "Batches").is_dir()
+
+
+def test_abbruchschwelle_ohne_beleg_wird_geklemt(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path / "state"))
+    apply_setup(_values(tmp_path, BackupTimeoutHours="5000"))
+    assert load_config()["BackupTimeoutHours"] == 720
+    apply_setup(_values(tmp_path, BackupTimeoutHours="0"))
+    assert load_config()["BackupTimeoutHours"] == 1
+    apply_setup(_values(tmp_path))
+    assert load_config()["BackupTimeoutHours"] == 72
 
 
 def test_verschachtelte_ordner_werden_abgewiesen(tmp_path, monkeypatch):
@@ -45,6 +55,11 @@ def test_import_braucht_beide_wolken_ordner(tmp_path, monkeypatch):
     both = apply_setup(_values(tmp_path, InboxRoot=str(tmp_path / "inbox"),
                                DropboxRoot=str(tmp_path / "dropbox")))
     assert both["ok"], both["errors"]
+    assert load_config()["ImportEnabled"] is True
+
+    onedrive_only = apply_setup(_values(tmp_path, InboxRoot=str(tmp_path / "inbox"),
+                                        OneDriveRoot=str(tmp_path / "onedrive")))
+    assert onedrive_only["ok"], onedrive_only["errors"]
     assert load_config()["ImportEnabled"] is True
 
 

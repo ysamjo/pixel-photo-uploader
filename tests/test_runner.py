@@ -23,8 +23,29 @@ def test_sperre_eines_toten_prozesses_wird_gebrochen(tmp_path, monkeypatch):
     assert runner.acquire("api")
 
 
+def test_sperre_ohne_startzeit_ist_unbewiesen(tmp_path, monkeypatch):
+    """Altbestand vor dem Fix: pid 1 wiederholt sich bei jedem Container-Start."""
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    runner.lock_path().write_text(json.dumps({
+        "pid": os.getpid(), "reason": "watch",
+        "takenUtc": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
+    assert runner.acquire("api")
+
+
+def test_neue_sperre_ist_erkennbar_an_der_startzeit(tmp_path, monkeypatch):
+    """Container-Neustart vergeben pid 1 neu: die Zahl allein ist kein Lebenszeichen."""
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner, "_proc_starttime", lambda pid: 5_000)
+    runner.lock_path().write_text(json.dumps({
+        "pid": os.getpid(), "started": 4_000, "reason": "watch",
+        "takenUtc": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
+    assert runner.acquire("api")
+    assert runner._read(runner.lock_path())["started"] == 5_000
+
+
 def test_uralte_sperre_wird_gebrochen_und_gemeldet(tmp_path, monkeypatch):
     monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+
     assert runner.acquire("watch")
     old = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     runner.lock_path().write_text(json.dumps(

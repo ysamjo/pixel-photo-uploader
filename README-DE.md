@@ -1,139 +1,114 @@
-# Pixel Photo Uploader — UmbrelOS-Port (App + Resilio)
+# Pixel Photo Uploader — ZimaOS & Container (App + Resilio)
 
-Gleiche Logik wie das eingefrorene Windows-Skript (`PixelPhotoUploader.ps1`
-3.3.12, siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/`), nur der
-**App + Resilio-Weg** (kein ADB, kein USB-Kabel). Container-Stand 3.3.14:
-Import über Dateisystemgrenzen (EXDEV-Fallback für Cloud-Mounts) plus
-Sync-Rest-Filter, dazu lineare Duplikatprüfung (Größen-Index), lineare
-Rückbeleg-Abrechnung (Suffix-Set) und Checkpoint-Saves bei großen Batches.
-Gepflegt wird nur noch der Container; die Windows-Variante ist archiviert
-(siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/` mit Migrationshinweis).
+Automatisiert den Foto-Upload auf Google Fotos über ein altes Google Pixel mit
+unbegrenztem Speicherplatz: Sortiert Aufnahmen aus Cloud-Eingängen (Dropbox /
+OneDrive) ins lokale Archiv (nach `YYYY.MM`), packt Abhol-Batches in eine
+Resilio-Sync-Freigabe für das Pixel und rechnet die Rückbelege der Android
+Companion-App ab, sobald Google Fotos die Sicherung bestätigt hat.
 
-Einrichtung, Zähler und "Jetzt synchronisieren" laufen im Web-UI der App —
-SSH ist im Regelbetrieb nicht noetig.
+Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 
-## Paket
+## Was wo läuft
 
 ```
-umbrel-app.yml        Manifest (id = Ordnername)
-docker-compose.yml    server (Web-UI) + watcher (Zyklen) + app_proxy
-Dockerfile            python:3.12-slim, läuft als uid/gid 1000
-app/                  Python-Kern
-  config.py           config.json v3, Wurzel- und Schachtelprüfung
-  fingerprints.py     Windows-kompatibler Zeitstempel + Fingerabdruck
-  store.py            catalog/completed/staged + lastscan + Grundabgleich
-  pipeline.py         Dropbox -> Inbox -> Archiv/YYYY.MM
-  batches.py          Uebergabe in WindowsBatches/ + Rueckbelege
-  sync.py             ein Durchlauf, Vorabcheck, Zahlen fuer CLI und Web
-  runner.py           Sperre + "jetzt sincronisieren"-Bitte an den watcher
-  watch.py            Poll-Schleife (weckt frueher, wenn etwas eingereiht ist)
-  server.py           Statusseite, Setup-Formular, API
-  cli.py              setup / sync / status / preflight / watch
-data/...              legefreie Ordner fuer die Bind-Mounts (nur .gitkeep)
-tests/                pytest, 48 Tests ohne Docker und ohne Netz
+ OneDrive / Dropbox ──> [_eingang] ──> sortieren ──> [Archiv YYYY.MM]
+                                                            │ nur KOPIEREN
+                                                            v
+                                            [PixelSync/staging/Batches/<id>]
+                                                            │ Resilio Sync
+                                                            v
+                                            Pixel + „Pixel Photo Companion"
+                                            wartet „Sicherung abgeschlossen"
+                                                            │ receipt-*.json
+                                                            v
+                                            [PixelSync/control] ──> Uploader löscht
+                                            bestätigte Batches vom Pixel
 ```
 
-## Fingerabdruck kompatibel zum Windows-Katalog
+1. **Clouds sind nur Eingänge:** Werden per Verschieben geleert, damit Speicher nicht voll läuft.
+2. **Das Archiv ist die Bibliothek:** Daraus wird ausschließlich kopiert.
+3. **Duplikate entscheidet SHA-256:** Nicht der Dateiname.
+4. **Screenshots & Memes:** Bleiben im Eingang und gehen nie ans Pixel.
+5. **Ein Batch, ein Rückbeleg:** Der nächste Batch startet erst, wenn das Pixel den aktuellen bestätigt hat.
+6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 72 h) keinen Rückbeleg hat, wandert in `blocked.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; blockierte Fingerabdrücke laufen nie wieder ein.
 
-`RelativePath` steht POSIX-Style (`a/b.jpg`), der Fingerabdruck normalisiert wie
-der PS1 auf Backslash + Kleinbuchstaben. Der Zeitstempel liegt im
-.NET-Format `'o'` vor (7 Nachkommastellen + `Z`), damit ein uebernommener
-`catalog.csv` dieselben Fingerabdruecke erzeugt wie unter Windows.
+## Paketinhalt
 
-## Grundabgleich statt Dauer-Suchen
+```
+docker-compose.yml         ZimaOS-App-Definition (für "Custom Install")
+docker-compose.local.yml   Lokale Entwicklung & Tests (Mac / Linux / Windows)
+Dockerfile                 python:3.12-slim, unprivilegierter Nutzer
+app/                       Python-Kern
+  config.py                Konfiguration, Wurzel- und Schachtelprüfung
+  fingerprints.py          Zeitstempel + SHA-256 Fingerabdruck
+  store.py                 catalog / completed / staged / blocked / lastscan
+  pipeline.py              Import -> Archiv/YYYY.MM
+  batches.py               Übergabe in Batches/ + Rückbelege
+  sync.py                  Sync-Durchlauf & Zähler
+  runner.py                Job-Sperre & Sync-Anforderung
+  watch.py                 Hintergrund-Watcher (Polling)
+  server.py                Web-UI (Status, Setup, Manuelle Aktionen)
+  cli.py                   Kommandozeile (setup, sync, status, watch)
+android/                   Android Companion-App (PixelPhotoCompanion)
+  app/build/outputs/apk/   Fertige app-debug.apk für das Pixel
+data/                      Ordnerstruktur für Bind-Mounts
+tests/                     71 Tests (pytest, kein Netzwerk nötig)
+```
 
-- Ein Zyklus laeuft alle `RescanMinutes` (Standard 360) durch den
-  Archiv-Ordner — aber nur durch Ordner, deren Schreibzeit seit dem letzten
-  Lauf aelter als 24 h ist, als "geschlossen" behandelt wird.
-- Neue Dateien in geschlossenen Ordnern findet der naechste **Vollabgleich**,
-  spaetestens alle `DeepRescanDays` (Standard 7).
-- Was der Import selbst ins Archiv legt, wird ohne Rekursivlauf nachgetragen.
-- `lastscan.json` haftet an einem `SourceRoot`: anderer Archivordner =>
-  sofort Vollabgleich.
+## Installation auf ZimaOS
 
-## Resilio-Freigabe (Ein-Ordner-Prinzip)
+### 1. Image auf ZimaOS bereitstellen
 
-Nur noch **ein einziger gemeinsamer Ordner** in Resilio Sync:
+Entweder direkt auf dem ZimaOS-NAS bauen:
+```bash
+cd /DATA/AppData/pixel-photo-uploader
+docker build -t pixel-photo-uploader:3.3.14 .
+```
 
-| Freigabe | auf dem Pixel | auf dem Server (Umbrel) | im Container |
-| --- | --- | --- | --- |
-| **PixelSync** (bidirektional) | `/storage/emulated/0/DCIM/PixelSync` | `${APP_DATA_DIR}/data/pixelsync` | `/data/pixelsync` |
+Oder vom Entwicklungsrechner übertragen:
+```bash
+# Auf dem Mac/PC:
+docker save pixel-photo-uploader:3.3.14 | gzip > pixel-photo-uploader-3.3.14.tar.gz
+scp pixel-photo-uploader-3.3.14.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
-Darin liegen automatisch zwei Unterordner:
-- `staging/WindowsBatches/` (wird vom Uploader befüllt; im Container als `/data/staging` eingebunden)
-- `control/` (Rückbelege `receipt-*.json` der Companion-App; im Container als `/data/control` eingebunden)
+# Auf ZimaOS via SSH:
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.14.tar.gz
+```
 
-Die Companion-App auf dem Pixel überwacht `/storage/emulated/0/DCIM/PixelSync`, scannt die Batches unter `staging`, ignoriert `control/` und `.sync/`, und schreibt nach Bestätigung durch Google Fotos den Rückbeleg in `/storage/emulated/0/DCIM/PixelSync/control`.
+### 2. Im ZimaOS App-Manager installieren
 
-Das Archiv (`/data/archive`) liegt **ausserhalb** der Freigaben: hierher wird
-nur sortiert, daraus wird nur kopiert. Geloescht werden ausschliesslich
-abgeschlossene Batch-Ordner unter `staging/WindowsBatches/`.
+1. In ZimaOS auf **App Store** -> **Install a customized app** klicken.
+2. Den Inhalt der [docker-compose.yml](file:///Users/family/Developer/pixel-photo-uploader-docker/docker-compose.yml) einfügen.
+3. Die Hostpfade bei Bedarf anpassen (Standard: `/DATA/Media/Photos/Archiv`, `/DATA/AppData/pixel-photo-uploader/...`).
+4. Installieren & starten.
 
-## Installation auf umbrelOS
+### 3. Resilio Sync einrichten
 
-1. Ordner `pixel-photo-uploader/` in den Community-App-Store legen (oder
-   `~/umbrel/system/app-store/` bzw. per `umbrel-app-store`-Config).
-2. Das Image kommt aus dem Repository-Build (`.github/workflows/publish.yml`,
-   Tag `v3.3.14` -> `ghcr.io/ysamjo/pixel-photo-uploader:3.3.14`). In
-   `docker-compose.yml` steht der Digest des manifest lists, weil der offizielle
-   Store kein `build:` zulaesst. Selbst nach einem Digest schauen:
+In Resilio Sync genau **einen** Ordner teilen:
+- **Server-Pfad:** `/DATA/AppData/resilio-sync/data/pixelsync` (Resilio kann nur
+  Ordner unterhalb seiner Freigabe-Wurzel `/sync` teilen)
+- **Pixel-Pfad:** `/storage/emulated/0/DCIM/PixelSync`
 
-   ```sh
-   docker buildx imagetools inspect ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
-   # image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14@sha256:<digest>
-   ```
+### 4. Pixel Companion App installieren
 
-   Zum Bauen ohne ghcr-Zugang: `docker buildx build --platform linux/amd64,linux/arm64
-   -t <registry>/pixel-photo-uploader:3.3.14 --push .`
+Die fertige APK liegt unter:
+[`android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk`](file:///Users/family/Developer/pixel-photo-uploader-docker/android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk)
 
-   Ohne Registry reicht auf dem Umbrel einmalig:
-   `docker build -t pixel-photo-uploader:3.3.14 .`
-3. App starten, im Web-UI **Einrichtung** oeffnen und die Pfade setzen
-   (`/data/archive`, `/data/staging`, `/data/control`; Dropbox/Inbox leer
-   lassen, wenn nichts importiert werden soll), dann **Speichern**.
-4. "Sync jetzt" oder "Vollabgleich jetzt" druecken — der watcher uebernimmt,
-   die Seite zeigt "eingereiht" und danach die neuen Zahlen.
+Auf dem Pixel installieren, Berechtigungen für Speicher und Barrierefreiheit (für Google Fotos Status-Erkennung) erteilen.
 
-Fuer eine echte Einreichung im offiziellen Store fehlen noch Icon und
-Gallery-Bilder (die kommen ins `umbrel-apps`-Repository, nicht in dieses Paket),
-und `submission` muss auf die PR dort zeigen.
+## Lokale Entwicklung & Tests (Mac / PC)
 
-## Ohne Docker (Entwicklung)
+Mit lokalem Docker:
+```bash
+docker compose -f docker-compose.local.yml up -d --build
+```
+Danach ist das Web-UI unter `http://localhost:8000` erreichbar.
 
-```sh
+Ohne Docker:
+```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-PPU_STATE_DIR=~/.ppu-test python -m app.cli setup
-PPU_STATE_DIR=~/.ppu-test python -m app.cli sync
-PPU_STATE_DIR=~/.ppu-test python -m app.cli sync --deep
-PPU_STATE_DIR=~/.ppu-test python -m app.cli status
-PPU_STATE_DIR=~/.ppu-test python -m app.cli watch --poll-seconds 60
-PPU_STATE_DIR=~/.ppu-test uvicorn app.server:app --port 8000
+pytest
 ```
 
-## Pruefung
-
-```sh
-python -m pytest tests/ -q          # 51 Tests, ohne Docker, ohne Netz
-```
-
-Offizieller Umbrel-Linter (aus dem `umbrel-apps`-Repository, dieses Paket als
-Root zeigen lassen):
-
-```sh
-node .tools/lint-apps.mjs pixel-photo-uploader --root <pfad-zu>/umbrel
-```
-
-Er meldet fuer dieses Paket 0 Fehler. Die Compose-Datei bleibt bewusst ohne
-YAML-Anker: der Parser des Linters loest `<<: *anchor` nicht auf, ein geankertes
-Compose wuerde bei `image` und `volumes` stillschweigend durchgewinkt.
-
-## Was Windows-only bleibt (bewusst nicht portiert)
-
-- ADB (WLAN und USB), `tools\platform-tools\adb.exe`, `Start-*.cmd`,
-  WinForms-GUI, COM `Shell.Application`, `System.Drawing`.
-- `tasks.json`-Prozessverfolgung und FileSystemWatcher mit 64-KiB-Puffer:
-  im Container durch Polling ersetzt.
-- `ReserveGiB` (Freiraum-Puffer vor dem Batch) bleibt ADB-only; die
-  Uebergabe per App kennt keinen vollen Telefonspeicher, weil die
-  Rueckbelege erst nach der Google-Fotos-Freigabe abarbeiten.
+Alle 71 Tests laufen ohne Docker und ohne Netzwerkzugriffe.

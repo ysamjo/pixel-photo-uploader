@@ -2,11 +2,12 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+    image: pixel-photo-uploader:3.3.14
     restart: unless-stopped
+    command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - target: 8000
-        published: ${WEBUI_PORT:-8000}
+        published: "8088"
         protocol: tcp
     environment:
       PPU_STATE_DIR: /data/state
@@ -14,40 +15,36 @@ services:
       # Archiv: hierher wird nur sortiert, daraus wird nur kopiert.
       - /DATA/Media/Photos/Archiv:/data/archive
       # Ein-Ordner-Prinzip: genau dieser Ordner wird per Resilio mit dem Pixel geteilt.
-      - /DATA/AppData/pixel-photo-uploader/pixelsync:/data/pixelsync
-      - /DATA/AppData/pixel-photo-uploader/pixelsync/staging:/data/staging
-      - /DATA/AppData/pixel-photo-uploader/pixelsync/control:/data/control
+      - /DATA/AppData/resilio-sync/data/pixelsync:/data/pixelsync
+      - /DATA/AppData/resilio-sync/data/pixelsync/staging:/data/staging
+      - /DATA/AppData/resilio-sync/data/pixelsync/control:/data/control
       - /DATA/AppData/pixel-photo-uploader/state:/data/state
-      # Optionale Importquellen (im Web-Setup leer lassen = kein Import).
-      # Empfohlen: lokale Spiegel-Ordner, die per ZimaOS-Dateibrowser oder
-      # Sync-Auftrag aus OneDrive/Dropbox befuellt werden (siehe README).
-      - /DATA/Media/Photos/_eingang-dropbox:/data/dropbox
+      # Cloud-Eingaenge (Dropbox + OneDrive) und lokaler Eingang:
+      - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
+      - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
       - /DATA/Media/Photos/_eingang-inbox:/data/inbox
-      # Alternative: Cloud-Mounts direkt einhaengen (Hostpfad aus dem
-      # ZimaOS-Dateibrowser übernehmen, Schreibrechte nötig):
-      # - /media/OneDrive/Camera Uploads:/data/dropbox
-      # - /media/OneDrive/Eigene Aufnahmen:/data/inbox
 
   watcher:
-    image: ghcr.io/ysamjo/pixel-photo-uploader:3.3.14
+    image: pixel-photo-uploader:3.3.14
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
       PPU_STATE_DIR: /data/state
     volumes:
       - /DATA/Media/Photos/Archiv:/data/archive
-      - /DATA/AppData/pixel-photo-uploader/pixelsync:/data/pixelsync
-      - /DATA/AppData/pixel-photo-uploader/pixelsync/staging:/data/staging
-      - /DATA/AppData/pixel-photo-uploader/pixelsync/control:/data/control
+      - /DATA/AppData/resilio-sync/data/pixelsync:/data/pixelsync
+      - /DATA/AppData/resilio-sync/data/pixelsync/staging:/data/staging
+      - /DATA/AppData/resilio-sync/data/pixelsync/control:/data/control
       - /DATA/AppData/pixel-photo-uploader/state:/data/state
-      - /DATA/Media/Photos/_eingang-dropbox:/data/dropbox
+      - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
+      - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
       - /DATA/Media/Photos/_eingang-inbox:/data/inbox
 
 x-casaos:
   id: io.github.ysamjo.pixel-photo-uploader
   main: server
   index: /
-  port_map: ${WEBUI_PORT:-8000}
+  port_map: "8088"
   scheme: http
   icon: https://raw.githubusercontent.com/ysamjo/pixel-photo-uploader/main/zimaos/Apps/PixelPhotoUploader/icon.svg
   title:

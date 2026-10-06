@@ -127,3 +127,25 @@ def test_destination_index_lists_folder_once(tmp_path):
     assert [p.name for p in index.candidates(folder, 10)] == ["a.jpg"]
     index.note_moved(folder, folder / "c.jpg", 10)
     assert sorted(p.name for p in index.candidates(folder, 10)) == ["a.jpg", "c.jpg"]
+
+
+def test_import_sweeps_onedrive_and_dropbox(tmp_path, monkeypatch):
+    cfg = _roots(tmp_path, monkeypatch)
+    onedrive = tmp_path / "onedrive"
+    onedrive.mkdir()
+    cfg["OneDriveRoot"] = str(onedrive)
+    save_config_atomic(cfg)
+
+    db_pic = Path(cfg["DropboxRoot"]) / "IMG_20260901_100000.jpg"
+    db_pic.write_bytes(b"1" * 12)
+    _old_mtime(db_pic)
+
+    od_pic = onedrive / "IMG_20260902_100000.jpg"
+    od_pic.write_bytes(b"2" * 12)
+    _old_mtime(od_pic)
+
+    result = pipeline.run_import(cfg)
+    assert result["moved"] == 4  # 2 to inbox, 2 to archive
+    text = log_path().read_text(encoding="utf-8")
+    assert "Dropbox sweep" in text and "OneDrive sweep" in text and "sorting" in text
+    assert not db_pic.exists() and not od_pic.exists()

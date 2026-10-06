@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config_path, state_root
+from . import DEFAULT_BACKUP_TIMEOUT_HOURS, config_path, state_root
 
 DEFAULTS: dict = {
     "Version": 3,
@@ -21,6 +21,7 @@ DEFAULTS: dict = {
     "RequireUnlocked": True,
     "ImportEnabled": False,
     "DropboxRoot": "",
+    "OneDriveRoot": "",
     "InboxRoot": "",
     "SourceRoot": "",
     "BatchGiB": 5.0,
@@ -30,7 +31,7 @@ DEFAULTS: dict = {
     "DeepRescanDays": 7,
     "ScanGraceMinutes": 5,
     "BackupPollSeconds": 45,
-    "BackupTimeoutHours": 72,
+    "BackupTimeoutHours": DEFAULT_BACKUP_TIMEOUT_HOURS,
     "RemoteRoot": "/sdcard/DCIM/Camera/PixelUploader",
 }
 
@@ -43,7 +44,10 @@ def _validate_roots(cfg: dict) -> None:
     """
     required = ["SourceRoot", "StagingRoot", "ControlRoot"]
     if cfg.get("ImportEnabled"):
-        required = ["DropboxRoot", "InboxRoot"] + required
+        if not str(cfg.get("DropboxRoot", "")).strip() and not str(cfg.get("OneDriveRoot", "")).strip():
+            raise ValueError(
+                "DropboxRoot or OneDriveRoot is empty while the config expects it. Re-run 'setup'.")
+        required = ["InboxRoot"] + required
     roots: dict[str, Path] = {}
     for name in required:
         raw = str(cfg.get(name, "")).strip()
@@ -51,6 +55,10 @@ def _validate_roots(cfg: dict) -> None:
             raise ValueError(
                 f"{name} is empty while the config expects it. Re-run 'setup'.")
         roots[name] = Path(raw).expanduser().resolve()
+    for opt in ("DropboxRoot", "OneDriveRoot"):
+        raw = str(cfg.get(opt, "")).strip()
+        if raw:
+            roots[opt] = Path(raw).expanduser().resolve()
     names = sorted(roots)
     for i in range(len(names)):
         for j in range(i + 1, len(names)):

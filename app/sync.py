@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import APP_BATCH_FOLDER
-from .batches import confirm_staged, repair_batches, select_and_stage_batch
+from .batches import (confirm_staged, expire_staged, handover_dir, repair_batches,
+                      select_and_stage_batch)
 from .config import load_config
 from .pipeline import run_import
 from .runner import acquire, holder, release
@@ -24,7 +25,8 @@ def preflight(cfg: dict) -> dict:
     probe = staging / ".ppu-write-probe"
     probe.write_text("probe", encoding="ascii")
     probe.unlink(missing_ok=True)
-    (staging / APP_BATCH_FOLDER).mkdir(parents=True, exist_ok=True)
+    for p in (staging, control, staging / APP_BATCH_FOLDER):
+        handover_dir(p)
     batches = [d for d in (staging / APP_BATCH_FOLDER).iterdir() if d.is_dir()]
     receipts = list(control.glob("receipt-*.json"))
     write_log(f"Handover folder writable ({staging}); {len(batches)} batches, "
@@ -77,9 +79,10 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
         catalog = reconcile(cfg, result.get("archive_paths", ()), force_deep=force_deep)
         repair_batches(cfg)
         confirmed = confirm_staged(cfg)
+        blocked = expire_staged(cfg)
         staged_count = select_and_stage_batch(cfg)
         return {"import": result, "catalog_files": len(catalog),
-                "confirmed": confirmed, "staged": staged_count}
+                "confirmed": confirmed, "blocked": blocked, "staged": staged_count}
     finally:
         release()
 
@@ -99,6 +102,7 @@ def status() -> dict:
     print(f"Katalog:      {info['catalog_files']} Dateien")
     print(f"Abgeschlossen:{info['completed']} Fingerabdruecke")
     print(f"Auf Pixel:    {info['staged']} Dateien")
+    print(f"Blockiert:    {info['blocked']} Dateien (kein Rueckbeleg, Archiv bleibt)")
     print(f"Offen:        {info['open_stable']} Dateien / "
           f"{info['open_bytes'] / 1024**3:.2f} GiB")
     if info["running"]:

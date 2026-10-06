@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 APP_VERSION = "3.3.14"
-APP_BATCH_FOLDER = "WindowsBatches"  # keep name: Pixel app expects it
+APP_BATCH_FOLDER = "Batches"
 
 MIN_BATCH_GIB = 0.25
 MAX_BATCH_GIB = 10.0
@@ -15,6 +15,11 @@ MAX_STABLE_SECONDS = 43200
 SCAN_PRUNE_GRACE_HOURS = 24
 MIN_DEEP_RESCAN_DAYS = 1
 MAX_DEEP_RESCAN_DAYS = 365
+# A rejected file must not hold the whole queue: after this many hours without a
+# receipt it leaves the handover and is recorded as blocked.
+DEFAULT_BACKUP_TIMEOUT_HOURS = 72
+MIN_BACKUP_TIMEOUT_HOURS = 1
+MAX_BACKUP_TIMEOUT_HOURS = 720
 # A handful of reports is cheaper to follow than to re-walk the whole archive.
 BULK_PATH_LIMIT = 500
 
@@ -43,6 +48,10 @@ def completed_path() -> Path:
 
 def staged_path() -> Path:
     return state_root() / "staged.json"
+
+
+def blocked_path() -> Path:
+    return state_root() / "blocked.csv"
 
 
 def lastscan_path() -> Path:

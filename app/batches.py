@@ -1,4 +1,4 @@
-"""App+Resilio batch handover (WindowsBatches/<id> + receipts).
+"""App+Resilio batch handover (Batches/<id> + receipts).
 
 Mirrors Copy-ToAppBatch / Write-AppBatchMarkers / Get-ReceiptRemovedPaths /
 Confirm-AppStagedBatches / Repair-AppBatches / Select-AndStageBatch (App branch).
@@ -13,21 +13,36 @@ from pathlib import Path
 from . import APP_BATCH_FOLDER
 from . import catalog_path as default_catalog_path
 from . import staged_path as default_staged_path
+from . import blocked_path as default_blocked_path
 from .fingerprints import file_sha256
 from .store import (
-    add_completion, catalog_sort_key, load_catalog, load_completion_sets,
-    load_staged, save_catalog, save_staged,
+    add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
+    load_catalog, load_completion_sets, load_staged, save_catalog, save_staged,
+    _parse_iso,
 )
 from .util import batch_capacity_bytes, clamp, write_log
 from . import MAX_BATCH_GIB, MIN_BATCH_GIB
+from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
+               MIN_BACKUP_TIMEOUT_HOURS)
 
 
 def batch_dir(staging_root: Path, batch_id: str) -> Path:
     return staging_root / APP_BATCH_FOLDER / batch_id
 
 
-def copy_to_batch(source: Path, directory: Path, staged_name: str) -> None:
+def handover_dir(directory: Path) -> Path:
+    """Create a handover folder the sync service can write into.
+
+    Resilio Sync runs as its own uid, so an app-owned 0755 folder locks it out of
+    the share: it has to create, replace and delete files in here in both directions.
+    """
     directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o777)
+    return directory
+
+
+def copy_to_batch(source: Path, directory: Path, staged_name: str) -> None:
+    handover_dir(directory)
     target = directory / staged_name
     part = directory / (staged_name + ".part")
     try:
@@ -35,6 +50,8 @@ def copy_to_batch(source: Path, directory: Path, staged_name: str) -> None:
         shutil.copy2(source, part)
         if part.stat().st_size != source.stat().st_size:
             raise IOError(f"Size check failed for handover file: {staged_name}")
+        # Cloud mounts hand over 0600 copies; the sync service must read them.
+        part.chmod(0o644)
         if target.exists():
             target.unlink()
         part.rename(target)
@@ -46,8 +63,7 @@ def copy_to_batch(source: Path, directory: Path, staged_name: str) -> None:
 
 
 def write_batch_markers(staging_root: Path, batch_id: str, entries: list[dict]) -> None:
-    d = batch_dir(staging_root, batch_id)
-    d.mkdir(parents=True, exist_ok=True)
+    d = handover_dir(batch_dir(staging_root, batch_id))
     total = sum(int(e.get("Size", 0)) for e in entries)
     manifest = {
         "version": 1,
@@ -97,6 +113,18 @@ def _remove_batch_dir(staging_root: Path, batch_id: str) -> None:
         write_log(f"Removed completed batch dir: {target}", "OK")
 
 
+def _retarget_batch(staging_root: Path, batch_id: str, keep: list[dict]) -> None:
+    """Leave a batch holding exactly what still waits.
+
+    The Pixel only accepts a batch whose content matches its manifest, so a
+    shrunk batch needs new markers or its leftovers are never offered again.
+    """
+    if not keep:
+        _remove_batch_dir(staging_root, batch_id)
+        return
+    write_batch_markers(staging_root, batch_id, keep)
+
+
 def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
     staged_file = staged_file or default_staged_path()
     staged = load_staged(staged_file)
@@ -106,7 +134,7 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
     if not removed:
         return 0
     lowered = [p.lower() for p in removed]
-    # Receipt paths end with the staged suffix (/WindowsBatches/<id>/<name>). One
+    # Receipt paths end with the staged suffix (/Batches/<id>/<name>). One
     # rfind per receipt replaces staged x receipts endswith checks; rfind (not find)
     # keeps the semantics identical to endswith because neither batch id nor staged
     # name can contain a second anchor.
@@ -144,22 +172,69 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
         write_log(f"{done} files confirmed via Android receipts.", "OK")
     staging_root = Path(str(cfg["StagingRoot"]))
     for batch_id, confirmed in confirmed_by_batch.items():
-        if batch_id not in unconfirmed_by_batch:
-            _remove_batch_dir(staging_root, batch_id)
-        else:
-            rest = unconfirmed_by_batch[batch_id]
-            d = batch_dir(staging_root, batch_id)
-            for entry in confirmed:
-                name = str(entry.get("StagedName", ""))
-                if name and (d / name).is_file():
-                    (d / name).unlink()
-            # Pixel treats a batch as complete only if content matches the
-            # manifest; shrink manifest so leftovers are re-offered (v3.3.9).
-            write_batch_markers(staging_root, batch_id, rest)
+        rest = unconfirmed_by_batch.get(batch_id, [])
+        d = batch_dir(staging_root, batch_id)
+        for entry in confirmed:
+            name = str(entry.get("StagedName", ""))
+            if name and (d / name).is_file():
+                (d / name).unlink()
+        _retarget_batch(staging_root, batch_id, rest)
+        if rest:
             write_log(f"Batch {batch_id} shrunk to {len(rest)} remaining files.", "OK")
     if remaining:
         write_log(f"{len(remaining)} files still wait for their Android receipt.")
     return done
+
+
+def backup_timeout_hours(cfg: dict) -> float:
+    return clamp(float(cfg.get("BackupTimeoutHours", DEFAULT_BACKUP_TIMEOUT_HOURS)),
+                 MIN_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS)
+
+
+def expire_staged(cfg: dict, staged_file: Path | None = None,
+                  blocked_file: Path | None = None,
+                  now: datetime | None = None) -> int:
+    """Drop handover files that never got a receipt, so the queue moves on.
+
+    Only the handover copy goes; the archive keeps its copy and Resilio removes
+    the Pixel copy. Without this a single rejected file blocks every later
+    batch, because staging waits for an empty staged.json.
+    """
+    staged_file = staged_file or default_staged_path()
+    blocked_file = blocked_file or default_blocked_path()
+    staged = load_staged(staged_file)
+    if not staged:
+        return 0
+    hours = backup_timeout_hours(cfg)
+    reference = now or datetime.now(timezone.utc)
+    expired = [e for e in staged
+               if (reference - _parse_iso(str(e.get("StagedUtc", "")))).total_seconds() / 3600
+               >= hours]
+    if not expired:
+        return 0
+    append_blocked(expired, f"No receipt within {hours:g} h", blocked_file)
+    keep = [e for e in staged if e not in expired]
+    save_staged(keep, staged_file)
+
+    staging_root = Path(str(cfg["StagingRoot"]))
+    kept_by_batch: dict[str, list[dict]] = {}
+    for entry in keep:
+        if str(entry.get("BatchId", "")):
+            kept_by_batch.setdefault(str(entry["BatchId"]), []).append(entry)
+    touched: set[str] = set()
+    for entry in expired:
+        batch_id = str(entry.get("BatchId", ""))
+        if not batch_id:
+            continue
+        touched.add(batch_id)
+        staged_p = batch_dir(staging_root, batch_id) / str(entry.get("StagedName", ""))
+        if staged_p.is_file():
+            staged_p.unlink()
+    for batch_id in sorted(touched):
+        _retarget_batch(staging_root, batch_id, kept_by_batch.get(batch_id, []))
+    write_log(f"{len(expired)} files got no receipt within {hours:g} h and are now "
+              f"blocked; their handover copies were released.", "WARN")
+    return len(expired)
 
 
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
@@ -203,6 +278,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
         return 0
     staged_fps = {str(e.get("Fingerprint", "")).lower() for e in staged}
     fps, hashes = load_completion_sets()
+    blocked = blocked_fingerprints()
     capacity = batch_capacity_bytes(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
     archive = Path(str(cfg["SourceRoot"]))
     selected: list[dict] = []
@@ -219,6 +295,8 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             continue
         if fp.lower() in fps:
             continue
+        if fp.lower() in blocked:
+            continue
         if fp.lower() in staged_fps:
             continue
         size = int(entry.get("Size", 0))
@@ -229,6 +307,12 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             continue
         src = archive / rel
         if not src.is_file():
+            continue
+        if src.stat().st_size == 0:
+            # Cloud mounts hand over 0-byte placeholders now and then. Google Photos never
+            # confirms one, so it would hold the whole batch open for BackupTimeoutHours.
+            append_blocked([entry], "Empty file - nothing for Google Photos to back up")
+            write_log(f"Empty file, released from the queue: {rel}", "WARN")
             continue
         if not entry.get("Sha256"):
             write_log(f"Checksum: {rel}")

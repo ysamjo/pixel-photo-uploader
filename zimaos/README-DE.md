@@ -16,7 +16,7 @@ Verpackung und die Standardpfade unterscheiden sich.
  Dropbox „Camera Uploads" ──────┘         │                                  │
                                           │ Duplikate (SHA-256)              │ nur KOPIEREN
                                           v                                  v
-                                   Screenshots/Memes               [PixelSync/WindowsBatches/<id>]
+                                   Screenshots/Memes               [PixelSync/staging/Batches/<id>]
                                    bleiben im Eingang                        │ Resilio Sync
                                                                              v
                                                         Pixel + „Pixel Photo Companion"
@@ -37,23 +37,28 @@ Regeln, kurz:
    schrumpfen.
 2. **Das Archiv ist die Bibliothek.** Daraus wird für das Pixel ausschließlich
    **kopiert**. Gelöscht werden nur bestätigte Batch-Ordner unter
-   `staging/WindowsBatches/`.
+   `staging/Batches/`.
 3. **Duplikate entscheidet SHA-256**, nicht der Dateiname. Gleicher Inhalt wird
    entfernt, gleicher Name mit anderem Inhalt bekommt ` (1)`, ` (2)` …
 4. **Screenshots und Memes** bleiben im Eingang (`Screenshots/`, `Memes/`) und
    gehen nie ans Pixel.
 5. **Ein Batch, ein Rückbeleg.** Der nächste Batch beginnt erst, wenn das Pixel
    den aktuellen per `receipt-*.json` bestätigt hat.
+6. **Nichts wartet endlos.** Bleibt eine Datei länger als `BackupTimeoutHours`
+   (Standard 72 h) ohne Rückbeleg, wandert sie nach `state/blocked.csv` und die
+   Handreichung wird freigegeben — das Archiv behält seine Kopie. Blockierte
+   Fingerabdrücke werden nie wieder vorgemerkt; zum erneuten Versuch die Zeile
+   in `blocked.csv` löschen.
 
 ## Pfade: Host (ZimaOS) → Container → Zweck
 
 | Host (anpassbar) | Container (fest) | Zweck |
 | --- | --- | --- |
 | `/DATA/Media/Photos/Archiv` | `/data/archive` | Archiv `JJJJ.MM`, nur Kopierquelle |
-| `/DATA/AppData/pixel-photo-uploader/pixelsync` | `/data/pixelsync` | **einzige** Resilio-Freigabe (bidirektional) |
-| … Unterordner `staging` | `/data/staging` | `WindowsBatches/<id>` + `_batch-manifest.json` |
+| `/DATA/AppData/resilio-sync/data/pixelsync` | `/data/pixelsync` | **einzige** Resilio-Freigabe (bidirektional), liegt in Resilios Sync-Wurzel `/sync` |
+| … Unterordner `staging` | `/data/staging` | `Batches/<id>` + `_batch-manifest.json` |
 | … Unterordner `control` | `/data/control` | `receipt-*.json` vom Pixel |
-| `/DATA/AppData/pixel-photo-uploader/state` | `/data/state` | `config.json`, `catalog.csv`, Log |
+| `/DATA/AppData/pixel-photo-uploader/state` | `/data/state` | `config.json`, `catalog.csv`, `blocked.csv`, Log |
 | `/DATA/Media/Photos/_eingang-dropbox` | `/data/dropbox` | Spiegel von Dropbox `Camera Uploads` |
 | `/DATA/Media/Photos/_eingang-inbox` | `/data/inbox` | Spiegel von OneDrive `Eigene Aufnahmen` |
 
@@ -97,7 +102,8 @@ die echten Hostpfade tauschen. Bedingungen:
    Startwerte: Batch **4–5 GiB**, Stabilität **120 s** lokal / **300 s** bei
    Cloud-Mounts, Grundabgleich **360 min**, Vollabgleich **7 Tage**.
 5. **Resilio Sync** aus dem ZimaOS-Store installieren und genau **einen**
-   Ordner teilen: `/DATA/AppData/pixel-photo-uploader/pixelsync`
+   Ordner teilen: `/DATA/AppData/resilio-sync/data/pixelsync` (im Container
+   `/sync/pixelsync`, also bereits in Resilios Sync-Wurzel)
    ↔ Pixel `/storage/emulated/0/DCIM/PixelSync`.
 6. Auf dem Pixel die **Pixel Photo Companion**-App (`../Android-App`,
    gleicher Ordner wie bisher): Datei- + Bedienungshilfen-Zugriff erlauben,
