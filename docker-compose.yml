@@ -73,10 +73,10 @@ x-casaos:
     - amd64
     - arm64
   version: "3.3.15"
-  update_at: "2026-09-28"
+  update_at: "2026-10-06"
   release_notes:
-    en_US: ZimaOS packaging; cross-filesystem import fix; linear import-dedup and receipt-confirm speedups.
-    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung.
+    en_US: ZimaOS packaging; cross-filesystem import fix; linear dedup and receipt speedups; Android refusal receipts release rejected files instead of blocking the queue.
+    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung; Absage-Rückbelege geben abgelehnte Dateien sofort frei.
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues
