@@ -1,0 +1,19 @@
+.gitignore
+.dockerignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.log
+data/archive/*
+data/staging/*
+data/control/*
+data/state/*
+!data/**/.gitkeep
+
+# Android-Build: lokal erzeugt, nicht fuer die Historie
+android/PixelPhotoCompanion/.gradle/
+android/PixelPhotoCompanion/build/
+android/PixelPhotoCompanion/app/build/
+*.apk
