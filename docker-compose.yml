@@ -36,10 +36,10 @@ services:
       # Optionaler Foto-Bestand: ein Bind-Mount UNTER /data/archive genuegt, denn
       # der Walk durchs Archiv ist rekursiv - kein Code, keine zweite Config-Wurzel.
       # :ro ist keine Kosmetik: der Mount haengt im Archivordner, und ein
-      # "rm -rf Archiv/_bestand" wuerde sonst durch ihn hindurch den Bestand loeschen.
+      # "rm -rf Archiv/Altbestand" wuerde sonst durch ihn hindurch den Bestand loeschen.
       # Nach dem Aktivieren genau EINEN Vollabgleich einreihen (Web-UI), sonst
       # ueberspringt der Grundabgleich den Ordner wegen zu alter Schreibzeit.
-      # - /media/Data_1/Pictures:/data/archive/_bestand:ro
+      # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
     image: pixel-photo-uploader:3.3.15
@@ -58,7 +58,7 @@ services:
       - /DATA/Media/Photos/_eingang-inbox:/data/inbox
       # Beide Dienste muessen denselben Bestand sehen, sonst rechnet der Server
       # Batches ab, die der Watcher nie katalogisiert hat (oder umgekehrt).
-      # - /media/Data_1/Pictures:/data/archive/_bestand:ro
+      # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
 x-casaos:
   id: io.github.ysamjo.pixel-photo-uploader

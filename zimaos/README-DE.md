@@ -61,7 +61,7 @@ Regeln, kurz:
 | `/DATA/AppData/pixel-photo-uploader/state` | `/data/state` | `config.json`, `catalog.csv`, `blocked.csv`, Log |
 | `/DATA/Media/Photos/_eingang-dropbox` | `/data/dropbox` | Spiegel von Dropbox `Camera Uploads` |
 | `/DATA/Media/Photos/_eingang-inbox` | `/data/inbox` | Spiegel von OneDrive `Eigene Aufnahmen` |
-| *(optional, auskommentiert)* | `/data/archive/_bestand` | alter Foto-Bestand, **nur lesend** mitlaufend |
+| *(optional, auskommentiert)* | `/data/archive/Altbestand` | alter Foto-Bestand, **nur lesend** mitlaufend |
 
 ### Beide Clouds anbinden (Variante A, empfohlen)
 
@@ -97,7 +97,7 @@ mitgeben will, **hängt ihn als Bind-Mount unter das Archiv** — die beiden
 auskommentierten Zeilen in `docker-compose.yml` sind genau dafür:
 
 ```yaml
-- /media/Data_1/Pictures:/data/archive/_bestand:ro
+- /media/Data_1/Pictures:/data/archive/Altbestand:ro
 ```
 
 Danach in der Web-UI **einmal „Vollabgleich"** einreihen. Ohne ihn bleibt der
@@ -108,8 +108,9 @@ Definition alt.
 Vier Regeln, die diese Zeile trägt:
 
 - **`ro` ist die Sicherung, nicht Deko.** Der Mount hängt *im* Archivordner. Ohne
-  Read-only würde ein `rm -rf Archiv/_bestand` durch ihn hindurch den Bestand
-  löschen. Die App selbst schreibt dort nie hin.
+  Read-only würde ein `rm -rf Archiv/Altbestand` durch ihn hindurch den Bestand
+  löschen. Die App selbst schreibt dort nie hin — Umzüge landen immer in
+  `Archiv/JJJJ.MM`, nie im Bestand.
 - **Niemals ein Eingangs-Feld auf den Bestand richten.** `DropboxRoot`,
   `OneDriveRoot` und `InboxRoot` sind Quellen, **aus denen verschoben wird** —
   der Import löscht die Quelldatei nach dem Umzug. Ein Bestand ist keine Quelle.

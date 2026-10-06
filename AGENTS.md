@@ -35,12 +35,14 @@ docker compose -f docker-compose.local.yml up -d --build
   `port_map` als Zeichenkette statt Zahl, `title`/`tagline`/`description` als
   sprachgeschlüsselte Objekte mit `en_US`, Daten unter `/DATA/`.
 - Alter Foto-Bestand läuft **nur als Mount unter dem Archiv** mit
-  (`…/Pictures:/data/archive/_bestand:ro`): der Walk ist rekursiv, eine zweite
+  (`…/Pictures:/data/archive/Altbestand:ro`): der Walk ist rekursiv, eine zweite
   Config-Wurzel gibt es nicht. `:ro` ist die Sicherung gegen ein `rm -rf`, das durch
-  den Mountpunkt hindurch in den Bestand greift, und nach dem Aktivieren ist **ein
-  Vollabgleich Pflicht** — sonst überspringt der Grundabgleich den Ordner wegen zu
-  alter Schreibzeit. Niemals `DropboxRoot`/`OneDriveRoot`/`InboxRoot` auf einen
-  Bestand richten: diese drei Quellen werden beim Import **geleert**.
+  den Mountpunkt hindurch in den Bestand greift — die App schreibt selbst nie dorthin,
+  `move_media_file()` kennt nur `inbox`, `inbox/{Screenshots,Memes}` und
+  `Archiv/JJJJ.MM` als Ziel. Nach dem Aktivieren ist **ein Vollabgleich Pflicht** —
+  sonst überspringt der Grundabgleich den Ordner wegen zu alter Schreibzeit.
+  Niemals `DropboxRoot`/`OneDriveRoot`/`InboxRoot` auf einen Bestand richten: diese
+  drei Quellen werden beim Import **geleert**.
 - Ein Bestand darf nicht aktiviert werden, während der Pixel offline ist: derselbe
   Durchlauf staged sofort den ersten Batch, und `expire_staged()` setzt nach
   `BackupTimeoutHours` mehrere hundert Bestandsdateien auf `blocked.csv`.
