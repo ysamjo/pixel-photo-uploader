@@ -5,7 +5,7 @@ on:
     inputs:
       tag:
         description: "Image tag to test"
-        default: "3.3.14"
+        default: "3.3.15"
 
 permissions:
   contents: read

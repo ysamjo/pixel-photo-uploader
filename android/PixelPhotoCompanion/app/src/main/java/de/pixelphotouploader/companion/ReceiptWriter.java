@@ -13,7 +13,8 @@ import java.util.UUID;
 final class ReceiptWriter {
     private ReceiptWriter() {}
 
-    static File write(Context context, List<String> removedPaths, int remainingCount) throws Exception {
+    static File write(Context context, List<String> removedPaths, List<String> refusedPaths,
+                      int remainingCount) throws Exception {
         String configured = AppState.prefs(context).getString("controlFolder",
                 AppState.DEFAULT_CONTROL_FOLDER);
         File folder = new File(configured);
@@ -34,6 +35,11 @@ final class ReceiptWriter {
         JSONArray removed = new JSONArray();
         for (String path : removedPaths) removed.put(path);
         receipt.put("removedPaths", removed);
+        // refusedPaths = "davon will Google Fotos nie etwas freigeben". Der Server
+        // gibt die Handreichung daraufhin auf, statt BackupTimeoutHours abzuwarten.
+        JSONArray refused = new JSONArray();
+        for (String path : refusedPaths) refused.put(path);
+        receipt.put("refusedPaths", refused);
 
         File temp = new File(folder, ".receipt-" + id + ".tmp");
         File target = new File(folder, "receipt-" + id + ".json");

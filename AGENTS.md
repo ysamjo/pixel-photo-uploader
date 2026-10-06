@@ -8,6 +8,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Packt Abhol-Batches (standardmäßig 5 GiB) in die Resilio-Sync-Freigabe `staging/Batches/`.
 - Die Android Companion-App (`PixelPhotoCompanion`) auf dem Pixel übernimmt den Batch, wartet auf die Bestätigung von Google Fotos ("Sicherung abgeschlossen") und schreibt einen Rückbeleg `receipt-*.json` in den `control/`-Ordner.
 - Der Uploader rechnet den Rückbeleg ab, markiert die Dateien in `completed.csv` als gesichert und löscht den Batch auf dem Pixel.
+- Sagt Google Fotos sechs Mal in Folge „Nichts freizugeben", bricht die App ab und schickt einen Rückbeleg mit `refusedPaths`: `release_refused()` legt genau diese Dateien nach `blocked.csv` frei, damit der nächste Batch nicht warten muss.
 - Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 72 h): Eintrag nach `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt. `select_and_stage_batch()` überspricht blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
 - Läuft 24/7 als ZimaOS-Container mit integriertem Web-UI und Hintergrund-Watcher.
 
@@ -22,8 +23,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 ## Commands
 
 ```bash
-.venv/bin/pytest                     # 83 Tests, kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.14 .
+.venv/bin/pytest                     # 86 Tests, kein Netzwerk nötig
+docker build -t pixel-photo-uploader:3.3.15 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 

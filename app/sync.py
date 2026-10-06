@@ -6,7 +6,7 @@ from pathlib import Path
 
 from . import APP_BATCH_FOLDER
 from .batches import (confirm_staged, expire_staged, handover_dir, repair_batches,
-                      select_and_stage_batch)
+                      release_refused, select_and_stage_batch)
 from .config import load_config
 from .pipeline import run_import
 from .runner import acquire, holder, release
@@ -79,10 +79,12 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
         catalog = reconcile(cfg, result.get("archive_paths", ()), force_deep=force_deep)
         repair_batches(cfg)
         confirmed = confirm_staged(cfg)
+        refused = release_refused(cfg)
         blocked = expire_staged(cfg)
         staged_count = select_and_stage_batch(cfg)
         return {"import": result, "catalog_files": len(catalog),
-                "confirmed": confirmed, "blocked": blocked, "staged": staged_count}
+                "confirmed": confirmed, "refused": refused, "blocked": blocked,
+                "staged": staged_count}
     finally:
         release()
 

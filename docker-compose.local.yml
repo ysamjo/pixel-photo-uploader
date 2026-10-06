@@ -10,7 +10,7 @@ name: pixel-photo-uploader-local
 services:
   server:
     build: .
-    image: pixel-photo-uploader:3.3.14
+    image: pixel-photo-uploader:3.3.15
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -27,7 +27,7 @@ services:
 
   watcher:
     build: .
-    image: pixel-photo-uploader:3.3.14
+    image: pixel-photo-uploader:3.3.15
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:

@@ -119,7 +119,7 @@ die echten Hostpfade tauschen. Bedingungen:
 | --- | --- | --- |
 | ZimaOS | **Pixel Photo Uploader** (dieses Paket) | sortieren, katalogisieren, Batches, Rückbelege |
 | ZimaOS | **Resilio Sync** (Store) | transportiert `PixelSync` zwischen NAS und Pixel |
-| Pixel | **Pixel Photo Companion 1.2.0** (`../Android-App`) | prüft Google Fotos, gibt Speicher frei, schreibt Rückbelege |
+| Pixel | **Pixel Photo Companion 1.2.2** (`../Android-App`) | prüft Google Fotos, gibt Speicher frei, schreibt Rückbelege |
 | Cloud | OneDrive- + Dropbox-Verknüpfung (ZimaOS Dateien) | Eingänge `Camera Uploads` / `Eigene Aufnahmen` |
 
 ## Was 3.3.13 und 3.3.14 gegenüber 3.3.12 ändern (nur Linux-Container)
@@ -142,6 +142,11 @@ die echten Hostpfade tauschen. Bedingungen:
   vorgemerkt, nie verloren.
 - **CLI-Text korrigiert:** Das Setup nennt wieder die eine Resilio-Freigabe
   (`DCIM/PixelSync` mit `staging/` + `control/`) statt zweier veralteter Pfade.
+- **Absage-Rückbeleg (3.3.15):** Sagt Google Fotos sechs Mal „Nichts freizugeben"
+  zu denselben Dateien, schickt das Pixel einen Rückbeleg mit `refusedPaths` statt
+  zu schweigen. Der Uploader legt diese Dateien sofort in `blocked.csv` und gibt
+  die Handreichung frei (`release_refused`); vorher hielt ein abgelehnter Rest die
+  ganze Queue bis `BackupTimeoutHours` auf. Archiv-Kopien bleiben erhalten.
 - Windows-PS1 ist eingefroren bei 3.3.12 (siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/`).
 
 Release-Ablauf: Tag `v3.3.13` pushen → `.github/workflows/publish.yml` baut

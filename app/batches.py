@@ -77,7 +77,7 @@ def write_batch_markers(staging_root: Path, batch_id: str, entries: list[dict]) 
     (d / "_batch-ready.txt").write_text("READY\n", encoding="ascii")
 
 
-def receipt_removed_paths(control_root: Path) -> list[str]:
+def _receipt_paths(control_root: Path, field: str) -> list[str]:
     paths: list[str] = []
     if not control_root.is_dir():
         return paths
@@ -89,10 +89,41 @@ def receipt_removed_paths(control_root: Path) -> list[str]:
             continue
         if not isinstance(receipt, dict) or receipt.get("version") != 1:
             continue
-        for p in receipt.get("removedPaths", []) or []:
+        for p in receipt.get(field, []) or []:
             if p:
                 paths.append(str(p).replace("\\", "/"))
     return paths
+
+
+def receipt_removed_paths(control_root: Path) -> list[str]:
+    return _receipt_paths(control_root, "removedPaths")
+
+
+def receipt_refused_paths(control_root: Path) -> list[str]:
+    """Paths the Pixel hands back as never freeable.
+
+    A refusal carries no removedPaths: nothing was freed, and the archive copy
+    is what stays. The handover has to let go of the file either way.
+    """
+    return _receipt_paths(control_root, "refusedPaths")
+
+
+def _staged_suffix_hits(paths: list[str]) -> set[str]:
+    """Reduce device paths to the /Batches/<id>/<name> part staged entries carry.
+
+    Receipt paths end with the staged suffix. One rfind per receipt replaces
+    staged x receipts endswith checks; rfind (not find) keeps the semantics
+    identical to endswith because neither batch id nor staged name can contain
+    a second anchor.
+    """
+    anchor = ("/" + APP_BATCH_FOLDER + "/").lower()
+    hits: set[str] = set()
+    for path in paths:
+        lowered = path.lower()
+        at = lowered.rfind(anchor)
+        if at >= 0:
+            hits.add(lowered[at:])
+    return hits
 
 
 def _remove_batch_dir(staging_root: Path, batch_id: str) -> None:
@@ -133,17 +164,7 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
     removed = receipt_removed_paths(Path(str(cfg["ControlRoot"])))
     if not removed:
         return 0
-    lowered = [p.lower() for p in removed]
-    # Receipt paths end with the staged suffix (/Batches/<id>/<name>). One
-    # rfind per receipt replaces staged x receipts endswith checks; rfind (not find)
-    # keeps the semantics identical to endswith because neither batch id nor staged
-    # name can contain a second anchor.
-    anchor = ("/" + APP_BATCH_FOLDER + "/").lower()
-    hit_suffixes: set[str] = set()
-    for path in lowered:
-        at = path.rfind(anchor)
-        if at >= 0:
-            hit_suffixes.add(path[at:])
+    hit_suffixes = _staged_suffix_hits(removed)
     fps, hashes = load_completion_sets()
     remaining: list[dict] = []
     confirmed_by_batch: dict[str, list[dict]] = {}
@@ -191,14 +212,43 @@ def backup_timeout_hours(cfg: dict) -> float:
                  MIN_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS)
 
 
+def _release_staged(cfg: dict, staged: list[dict], released: list[dict],
+                    reason: str, staged_file: Path, blocked_file: Path) -> int:
+    """Let go of staged entries: block them, and shrink every batch around the rest.
+
+    Only the handover copy goes; the archive keeps its copy and Resilio removes
+    the Pixel copy.
+    """
+    append_blocked(released, reason, blocked_file)
+    keep = [e for e in staged if e not in released]
+    save_staged(keep, staged_file)
+
+    staging_root = Path(str(cfg["StagingRoot"]))
+    kept_by_batch: dict[str, list[dict]] = {}
+    for entry in keep:
+        if str(entry.get("BatchId", "")):
+            kept_by_batch.setdefault(str(entry["BatchId"]), []).append(entry)
+    touched: set[str] = set()
+    for entry in released:
+        batch_id = str(entry.get("BatchId", ""))
+        if not batch_id:
+            continue
+        touched.add(batch_id)
+        staged_p = batch_dir(staging_root, batch_id) / str(entry.get("StagedName", ""))
+        if staged_p.is_file():
+            staged_p.unlink()
+    for batch_id in sorted(touched):
+        _retarget_batch(staging_root, batch_id, kept_by_batch.get(batch_id, []))
+    return len(released)
+
+
 def expire_staged(cfg: dict, staged_file: Path | None = None,
                   blocked_file: Path | None = None,
                   now: datetime | None = None) -> int:
     """Drop handover files that never got a receipt, so the queue moves on.
 
-    Only the handover copy goes; the archive keeps its copy and Resilio removes
-    the Pixel copy. Without this a single rejected file blocks every later
-    batch, because staging waits for an empty staged.json.
+    Without this a single rejected file blocks every later batch, because
+    staging waits for an empty staged.json.
     """
     staged_file = staged_file or default_staged_path()
     blocked_file = blocked_file or default_blocked_path()
@@ -212,29 +262,40 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
                >= hours]
     if not expired:
         return 0
-    append_blocked(expired, f"No receipt within {hours:g} h", blocked_file)
-    keep = [e for e in staged if e not in expired]
-    save_staged(keep, staged_file)
-
-    staging_root = Path(str(cfg["StagingRoot"]))
-    kept_by_batch: dict[str, list[dict]] = {}
-    for entry in keep:
-        if str(entry.get("BatchId", "")):
-            kept_by_batch.setdefault(str(entry["BatchId"]), []).append(entry)
-    touched: set[str] = set()
-    for entry in expired:
-        batch_id = str(entry.get("BatchId", ""))
-        if not batch_id:
-            continue
-        touched.add(batch_id)
-        staged_p = batch_dir(staging_root, batch_id) / str(entry.get("StagedName", ""))
-        if staged_p.is_file():
-            staged_p.unlink()
-    for batch_id in sorted(touched):
-        _retarget_batch(staging_root, batch_id, kept_by_batch.get(batch_id, []))
-    write_log(f"{len(expired)} files got no receipt within {hours:g} h and are now "
+    count = _release_staged(cfg, staged, expired, f"No receipt within {hours:g} h",
+                            staged_file, blocked_file)
+    write_log(f"{count} files got no receipt within {hours:g} h and are now "
               f"blocked; their handover copies were released.", "WARN")
-    return len(expired)
+    return count
+
+
+def release_refused(cfg: dict, staged_file: Path | None = None,
+                    blocked_file: Path | None = None) -> int:
+    """Release handover files the Pixel reports back as never freeable.
+
+    The companion app gives up after its own "Nothing to free up" rounds and
+    says so in a receipt instead of waiting out BackupTimeoutHours: without
+    this the rejected files would keep staged.json non-empty and hold the whole
+    queue for days.
+    """
+    staged_file = staged_file or default_staged_path()
+    blocked_file = blocked_file or default_blocked_path()
+    staged = load_staged(staged_file)
+    if not staged:
+        return 0
+    hits = _staged_suffix_hits(receipt_refused_paths(Path(str(cfg["ControlRoot"]))))
+    if not hits:
+        return 0
+    refused = [e for e in staged
+               if str(e.get("PixelSuffix", "")).lower() in hits]
+    if not refused:
+        return 0
+    count = _release_staged(cfg, staged, refused,
+                            "Google Photos refused to free the file",
+                            staged_file, blocked_file)
+    write_log(f"{count} files were refused by Google Photos and are now blocked; "
+              f"their handover copies were released.", "WARN")
+    return count
 
 
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:

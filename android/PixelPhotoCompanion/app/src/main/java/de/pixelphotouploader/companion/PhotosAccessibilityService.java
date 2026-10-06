@@ -268,17 +268,21 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 "can't free up space", "no items to free up")) {
             int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
             if (refused >= NOTHING_TO_FREE_ROUNDS) {
-                int stillThere = 0;
+                List<String> stuck = new ArrayList<>();
                 for (String line : prefs.getString("batchPaths", "").split("\\n")) {
-                    if (!line.trim().isEmpty()) stillThere++;
+                    if (!line.trim().isEmpty()) stuck.add(line.trim());
                 }
                 // nextAttemptAt auf Maximum: nur der Fehlerzustand allein hält die Automatik nicht
                 // an — ohne Sperre hätte sie Google Fotos weiterhin alle 45 Sekunden vorgeholt.
+                // Die Liste geht als Rückbeleg an den Server: dessen Handreichung bliebe sonst bis
+                // BackupTimeoutHours stehen, obwohl das Telefon sein Urteil schon gesprochen hat.
                 prefs.edit().putInt("nothingToFreeRounds", refused)
+                        .putString("pendingReceiptRefused", join(stuck))
                         .putLong("nextAttemptAt", Long.MAX_VALUE).apply();
                 AppState.phase(this, AppState.PHASE_ERROR,
-                        "Google Fotos gibt " + stillThere + " überwachte Dateien nicht frei ("
-                                + refused + " Mal „Nichts freizugeben“). Es wurde nichts freigegeben.");
+                        "Google Fotos gibt " + stuck.size() + " überwachte Dateien nicht frei ("
+                                + refused + " Mal „Nichts freizugeben“). Es wurde nichts freigegeben; "
+                                + "der Rückbeleg übergibt das Urteil an den Server.");
                 return;
             }
             prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L)

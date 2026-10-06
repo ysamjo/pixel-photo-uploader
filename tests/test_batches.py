@@ -262,3 +262,61 @@ def test_leere_datei_laeuft_sofort_aus_statt_den_batch_aufzuhalten(tmp_path, mon
     assert manifest["fileCount"] == 1
     assert sorted(p.name for p in d.iterdir()) == sorted(
         ["_batch-manifest.json", "_batch-ready.txt", staged[0]["StagedName"]])
+
+
+def _refusal_receipt(cfg: dict, entries: list[dict]) -> None:
+    (Path(cfg["ControlRoot"]) / "receipt-refusal.json").write_text(json.dumps({
+        "version": 1, "removedPaths": [], "remainingCount": len(entries),
+        "refusedPaths": [e["PixelSuffix"] for e in entries],
+    }), encoding="utf-8")
+
+
+def test_absage_rueckbeleg_gehoert_nicht_zum_erfolg(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    before = {e["Fingerprint"]: e for e in staged}
+    _refusal_receipt(cfg, staged[:1])
+
+    assert batches.release_refused(cfg, staged_file, blocked_file) == 1
+
+    rest = store.load_staged(staged_file)
+    assert [e["RelativePath"] for e in rest] == ["b.jpg"]
+    rows = store.load_blocked(blocked_file)
+    assert [r["RelativePath"] for r in rows] == ["a.jpg"]
+    assert rows[0]["Reason"] == "Google Photos refused to free the file"
+    assert store.load_completion_sets(tmp_path / "state" / "completed.csv")[0] == set()
+    d = batches.batch_dir(Path(cfg["StagingRoot"]), rest[0]["BatchId"])
+    assert (d / before["fp-a.jpg"]["StagedName"]).is_file() is False
+    manifest = json.loads((d / "_batch-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["fileCount"] == 1
+
+
+def test_absage_haelt_keinen_neuen_batch_auf(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    batch_id = store.load_staged(staged_file)[0]["BatchId"]
+    _refusal_receipt(cfg, store.load_staged(staged_file))
+
+    assert batches.release_refused(cfg, staged_file, blocked_file) == 2
+    assert store.load_staged(staged_file) == []
+    assert not batches.batch_dir(Path(cfg["StagingRoot"]), batch_id).exists()
+
+    catalog_file = tmp_path / "state" / "catalog.csv"
+    (Path(cfg["SourceRoot"]) / "c.jpg").write_bytes(os_bytes("c.jpg"))
+    store.save_catalog(store.load_catalog(catalog_file) + [{
+        "Fingerprint": "fp-c.jpg", "RelativePath": "c.jpg", "Size": str(len(os_bytes("c.jpg"))),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    }], catalog_file)
+
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+    assert [e["RelativePath"] for e in store.load_staged(staged_file)] == ["c.jpg"]
+
+
+def test_loesch_rueckbeleg_ist_keine_absage(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    (Path(cfg["ControlRoot"]) / "receipt-1.json").write_text(json.dumps({
+        "version": 1, "removedPaths": [staged[0]["PixelSuffix"]]}), encoding="utf-8")
+
+    assert batches.release_refused(cfg, staged_file, blocked_file) == 0
+    assert len(store.load_staged(staged_file)) == 2
+    assert not blocked_file.exists()

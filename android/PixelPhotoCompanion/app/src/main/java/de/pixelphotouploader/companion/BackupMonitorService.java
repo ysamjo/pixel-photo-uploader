@@ -98,6 +98,10 @@ public class BackupMonitorService extends Service {
             return;
         }
         if (healReceiptFromDisk(prefs, phase)) return;
+        if (!prefs.getString("pendingReceiptRefused", "").trim().isEmpty()) {
+            flushRefusalReceipt();
+            return;
+        }
 
         if (AppState.PHASE_VERIFY.equals(phase)) {
             long verifyAfter = prefs.getLong("verifyAfter", Long.MAX_VALUE);
@@ -207,13 +211,44 @@ public class BackupMonitorService extends Service {
         return true;
     }
 
+    private void flushRefusalReceipt() {
+        SharedPreferences prefs = AppState.prefs(this);
+        List<String> refused = new ArrayList<>();
+        for (String path : split(prefs.getString("pendingReceiptRefused", ""))) {
+            // Nur was noch liegt, ist eine echte Absage. Was fehlt, ist freigeben worden und
+            // wird über einen normalen Rückbeleg abgerechnet.
+            if (new File(path).exists()) refused.add(path);
+        }
+        prefs.edit().putString("pendingReceiptRefused", "").apply();
+        if (refused.isEmpty()) return;
+        try {
+            File receipt = ReceiptWriter.write(this, new ArrayList<String>(), refused,
+                    refused.size());
+            prefs.edit()
+                    .putString("lastReceipt", receipt.getAbsolutePath())
+                    .putString("batchPaths", "")
+                    // Das Urteil ist übergeben; die Zählung beginnt mit dem nächsten Batch von vorn.
+                    .putInt("nothingToFreeRounds", 0)
+                    .putLong("nextAttemptAt", System.currentTimeMillis() + 60_000L)
+                    .apply();
+            AppState.phase(this, AppState.PHASE_MONITORING,
+                    refused.size() + " Dateien gibt Google Fotos nicht frei; Urteil als Rückbeleg "
+                            + "an den Server übergeben. Die Archiv-Kopien bleiben erhalten.");
+        } catch (Exception error) {
+            prefs.edit().putString("pendingReceiptRefused", join(refused)).apply();
+            AppState.phase(this, AppState.PHASE_ERROR,
+                    "Das Absage-Urteil konnte nicht als Rückbeleg übergeben werden: "
+                            + error.getMessage());
+        }
+    }
+
     private void flushPendingReceipt() {
         SharedPreferences prefs = AppState.prefs(this);
         List<String> removedPaths = split(prefs.getString("pendingReceiptPaths", ""));
         if (removedPaths.isEmpty()) return;
         int remaining = prefs.getInt("pendingReceiptRemaining", 0);
         try {
-            File receipt = ReceiptWriter.write(this, removedPaths, remaining);
+            File receipt = ReceiptWriter.write(this, removedPaths, new ArrayList<String>(), remaining);
             int total = prefs.getInt("completedTotal", 0) + removedPaths.size();
             prefs.edit()
                     .putInt("completedTotal", total)
