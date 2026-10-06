@@ -22,7 +22,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 ## Commands
 
 ```bash
-.venv/bin/pytest                     # 72 Tests, kein Netzwerk nötig
+.venv/bin/pytest                     # 83 Tests, kein Netzwerk nötig
 docker build -t pixel-photo-uploader:3.3.14 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
