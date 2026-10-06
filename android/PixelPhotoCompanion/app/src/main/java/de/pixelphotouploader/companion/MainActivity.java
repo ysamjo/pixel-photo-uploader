@@ -160,8 +160,11 @@ public class MainActivity extends Activity {
         pause.setOnClickListener(v -> pauseMonitoring());
         photos.setOnClickListener(v -> openPhotos());
         reset.setOnClickListener(v -> {
+            // Beide Versuchs-Zähler mit löschen: sonst meldet die Automatik nach dem Zurücksetzen
+            // sofort wieder Fehler, weil die alten Versuche noch in den Prefs stehen.
             prefs.edit().putString("phase", AppState.PHASE_MONITORING).putString("detail", "Fehler zurückgesetzt.")
-                    .putInt("completeStreak", 0).putLong("nextAttemptAt", 0L).apply();
+                    .putInt("completeStreak", 0).putInt("freeUpRound", 0)
+                    .putInt("nothingToFreeRounds", 0).putLong("nextAttemptAt", 0L).apply();
             AppState.log(this, "Fehlerzustand manuell zurückgesetzt.");
             refresh();
         });

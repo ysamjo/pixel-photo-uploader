@@ -49,7 +49,8 @@ Ohne Android Studio genügt `./gradlew assembleDebug` im Projektordner; die APK 
 3. In Google Fotos Sicherung und **Originalqualität** aktivieren.
 4. In Google Fotos die Sicherung für den Ordner `PixelSync` aktivieren (Gerätesicherungsordner).
 5. In Resilio **genau einen Ordner** teilen: Pixel `/storage/emulated/0/DCIM/PixelSync`
-   ↔ Server-Ordner `pixelsync` (ZimaOS: `/DATA/AppData/pixel-photo-uploader/pixelsync`).
+   ↔ Server-Ordner `pixelsync` (ZimaOS: `/DATA/AppData/resilio-sync/data/pixelsync`,
+   weil Resilio nur Ordner seiner Freigabe-Wurzel `sync` teilen kann).
    Bidirektional, mit vollständiger Synchronisierung.
 6. In der App die vorbelegten Ordner prüfen: Überwachung auf
    `/storage/emulated/0/DCIM/PixelSync`, Kontrollordner auf
@@ -67,7 +68,7 @@ Der Server (Windows-Uploader, Umbrel- oder ZimaOS-App — für die Companion-App
 ist das derselbe Vertrag) gibt ausschließlich **einen** Resilio-Ordner frei,
 niemals die komplette Hauptbibliothek:
 
-- Server: `pixelsync/` mit den Unterordnern `staging/WindowsBatches/` (der
+- Server: `pixelsync/` mit den Unterordnern `staging/Batches/` (der
   Uploader legt pro Batch genau einen Ordner mit `_batch-manifest.json` und
   `_batch-ready.txt` an) und `control/` (hier landen die `receipt-*.json`).
 - Pixel: `/storage/emulated/0/DCIM/PixelSync` als einzige Freigabe empfangen;
@@ -76,6 +77,8 @@ niemals die komplette Hauptbibliothek:
 - Auf dem Pixel **Overwrite any changed files ausschalten**, damit von Google Fotos lokal entfernte Dateien nicht erneut geladen werden.
 
 Keinen zweiten Google-Fotos-Automatiklauf (z. B. den ADB-Dauerbetrieb) gleichzeitig laufen lassen. Sonst bedienen zwei Stellen parallel dieselbe Google-Fotos-Oberfläche. Die Companion-App ersetzt die Google-Fotos-Steuerung; Resilio ersetzt dabei den Transport zum Pixel.
+
+Ohne Rückbeleg gibt der Server die Handreichung nach `BackupTimeoutHours` (Standard 72 h) auf. Die App sieht das als lokal entfernte Datei und schreibt einen Rückbeleg darüber; der Server ignoriert ihn, weil der Eintrag dann schon in `blocked.csv` steht und nicht mehr vorgemerkt ist. Der Zähler „abgeschlossen" auf dem Telefon zählt diese Freigaben mit — die Abrechnung auf dem Server stimmt trotzdem.
 
 Nach einem Neustart muss das Pixel einmal manuell entsperrt werden. Die App speichert keine PIN und entsperrt das Gerät nicht selbst.
 

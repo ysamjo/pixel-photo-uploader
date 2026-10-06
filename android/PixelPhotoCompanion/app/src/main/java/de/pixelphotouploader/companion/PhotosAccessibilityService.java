@@ -30,6 +30,22 @@ public class PhotosAccessibilityService extends AccessibilityService {
     // und neun Stunden Schlaf sind kein Grund für einen Fehlerzustand.
     private static final int FREE_UP_ROUNDS = 6;
     private static final long FREE_UP_ROUND_SPACING = 5 * 60_000L;
+    // So oft darf Google Fotos „Nichts freizugeben“ melden, während noch Batchdateien auf dem
+    // Gerät liegen. Getrennt von freeUpRound gezählt: „nichts freizugeben“ ist kein Klickproblem,
+    // das ein weiterer Versuch löst, sondern Fotos' eigene Aussage, dass es diese Dateien nicht
+    // anfassen will. Ohne Zähler lief der Versuch alle 15 Minuten bis zum 72-Stunden-Limit durch —
+    // still, ohne dass ein Mensch je davon erfahren hätte.
+    private static final int NOTHING_TO_FREE_ROUNDS = 6;
+    // Wörter, die eine laufende Sicherung beweisen. Sie heavier als die Fehlerwörter unten:
+    // Promo- und Onboarding-Karten von Google Fotos enthalten Sätze wie „Backup is off“,
+    // während die Sicherung in Wahrheit durchläuft.
+    private static final String[] BACKUP_ACTIVE_NEEDLES = {
+            "sicherung läuft", "wird gesichert", "werden gesichert", "wird hochgeladen",
+            "hochladen läuft", "fotos werden gesichert", "videos werden gesichert",
+            "sicherung wird vorbereitet", "synchronis",
+            "backing up", "preparing backup", "getting ready to back up", "uploading",
+            "items left", "item left", "elemente verbleibend", "element verbleibend", "elemente"
+    };
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastActionAt = 0L;
     private long lastInspectAt = 0L;
@@ -89,7 +105,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
         collect(root, nodes);
         String all = allText(nodes);
 
-        if (containsAny(all,
+        String errorHit = firstMatch(all,
                 "sicherung ist deaktiviert", "sicherung deaktiviert", "sicherung aus", "sicherung ausgeschaltet",
                 "sicherung pausiert", "sicherung angehalten", "sicherungsfehler", "sicherung fehlgeschlagen",
                 "fehler bei der sicherung", "nicht gesichert", "keine sicherung", "fehlgeschlagen",
@@ -98,9 +114,13 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 "kontospeicher voll", "account storage full", "account storage is full",
                 "warten auf wlan", "warten auf netzwerk", "keine verbindung", "offline",
                 "waiting for wi-fi", "waiting for wifi", "waiting for network", "waiting for connection",
-                "no connection", "konnte nicht gesichert", "couldn't back up", "could not back up")) {
+                "no connection", "konnte nicht gesichert", "couldn't back up", "could not back up");
+        if (errorHit != null && !containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
+            // Der gefundene Wortlaut steht in der Meldung: ohne ihn war ein Fehlalarm von
+            // einem echten Sicherungsstopp auf dem Gerät nicht zu unterscheiden.
             AppState.phase(this, AppState.PHASE_ERROR,
-                    "Google Fotos meldet einen Sicherungsfehler. Es wurde nichts freigegeben.");
+                    "Google Fotos meldet einen Sicherungsfehler („" + errorHit
+                            + "“). Es wurde nichts freigegeben.");
             return;
         }
 
@@ -170,11 +190,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
             return;
         }
 
-        if (containsAny(all, "sicherung läuft", "wird gesichert", "werden gesichert", "wird hochgeladen",
-                "hochladen läuft", "fotos werden gesichert", "videos werden gesichert",
-                "sicherung wird vorbereitet", "synchronis",
-                "backing up", "preparing backup", "getting ready to back up", "uploading",
-                "items left", "item left", "elemente verbleibend", "element verbleibend", "elemente")) {
+        if (containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
             clearStuck(prefs);
             prefs.edit().putBoolean("sawActiveBackup", true).putInt("completeStreak", 0).apply();
             return;
@@ -250,10 +266,26 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 "nichts freizugeben", "nothing to free up", "kein speicherplatz freizugeben",
                 "keinen speicherplatz freigeben", "no space to free up", "cannot free up space",
                 "can't free up space", "no items to free up")) {
+            int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
+            if (refused >= NOTHING_TO_FREE_ROUNDS) {
+                int stillThere = 0;
+                for (String line : prefs.getString("batchPaths", "").split("\\n")) {
+                    if (!line.trim().isEmpty()) stillThere++;
+                }
+                // nextAttemptAt auf Maximum: nur der Fehlerzustand allein hält die Automatik nicht
+                // an — ohne Sperre hätte sie Google Fotos weiterhin alle 45 Sekunden vorgeholt.
+                prefs.edit().putInt("nothingToFreeRounds", refused)
+                        .putLong("nextAttemptAt", Long.MAX_VALUE).apply();
+                AppState.phase(this, AppState.PHASE_ERROR,
+                        "Google Fotos gibt " + stillThere + " überwachte Dateien nicht frei ("
+                                + refused + " Mal „Nichts freizugeben“). Es wurde nichts freigegeben.");
+                return;
+            }
             prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L)
-                    .putInt("freeUpRound", 0).apply();
+                    .putInt("freeUpRound", 0).putInt("nothingToFreeRounds", refused).apply();
             AppState.phase(this, AppState.PHASE_MONITORING,
-                    "Google Fotos meldet „Nichts freizugeben“ (Nothing to free up). Neuer Versuch in 15 Minuten.");
+                    "Google Fotos meldet „Nichts freizugeben“ (Nothing to free up). "
+                            + "Versuch " + refused + "/" + NOTHING_TO_FREE_ROUNDS + " in 15 Minuten.");
             return;
         }
         // Ebene 1 — Ressourcen-IDs: Auf dem Pixel läuft wahrscheinlich eine ältere Fotos-Fassung,
@@ -475,8 +507,13 @@ public class PhotosAccessibilityService extends AccessibilityService {
     }
 
     private static boolean containsAny(String text, String... needles) {
-        for (String needle : needles) if (text.contains(normalize(needle))) return true;
-        return false;
+        return firstMatch(text, needles) != null;
+    }
+
+    /** Der erste Treffer, nicht nur „irgend einer“: die Automatik meldet den Wortlaut. */
+    private static String firstMatch(String text, String... needles) {
+        for (String needle : needles) if (text.contains(normalize(needle))) return needle;
+        return null;
     }
 
     private static String normalize(String text) {

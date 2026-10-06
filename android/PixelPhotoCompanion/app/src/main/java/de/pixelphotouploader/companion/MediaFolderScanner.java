@@ -107,10 +107,12 @@ final class MediaFolderScanner {
         if (!file.exists() || !file.canRead()) return;
         if (file.isDirectory()) {
             if ("control".equalsIgnoreCase(file.getName()) || ".sync".equalsIgnoreCase(file.getName())) return;
-            if ("batches".equalsIgnoreCase(file.getName()) || "WindowsBatches".equalsIgnoreCase(file.getName()) || "staging".equalsIgnoreCase(file.getName())) {
+            // Der Container heisst nur "Batches"; "staging" eine Ebene darueber darf die
+            // Rekursion nicht abschneiden, sonst sieht die App die Batch-Ordner nie.
+            if ("batches".equalsIgnoreCase(file.getName())) {
                 File[] batches = file.listFiles();
                 if (batches != null) {
-                    for (File batch : batches) if (batch.isDirectory() && completeWindowsBatch(batch)) collectChildren(batch, current, all);
+                    for (File batch : batches) if (batch.isDirectory() && completeBatch(batch)) collectChildren(batch, current, all);
                 }
                 return;
             }
@@ -132,7 +134,7 @@ final class MediaFolderScanner {
         if (children != null) for (File child : children) collect(child, current, all);
     }
 
-    private boolean completeWindowsBatch(File folder) {
+    private boolean completeBatch(File folder) {
         File manifest = new File(folder, "_batch-manifest.json");
         File ready = new File(folder, "_batch-ready.txt");
         if (!manifest.isFile() || !ready.isFile()) return false;

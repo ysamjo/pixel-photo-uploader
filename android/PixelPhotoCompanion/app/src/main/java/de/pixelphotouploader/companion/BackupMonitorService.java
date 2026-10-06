@@ -221,6 +221,10 @@ public class BackupMonitorService extends Service {
                     .putString("lastReceipt", receipt.getAbsolutePath())
                     .putString("pendingReceiptPaths", "")
                     .putString("batchPaths", "")
+                    // Echter Fortschritt: Dateien sind weg. Die Absage-Zählung der Bedienungshilfe
+                    // beginnt damit von vorn — sonst zählten sich alte Absagen gegen die neuen
+                    // Dateien an.
+                    .putInt("nothingToFreeRounds", 0)
                     .putLong("nextAttemptAt", System.currentTimeMillis() + 60_000L)
                     .apply();
             AppState.phase(this, AppState.PHASE_MONITORING,
