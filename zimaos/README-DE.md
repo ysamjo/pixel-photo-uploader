@@ -61,6 +61,7 @@ Regeln, kurz:
 | `/DATA/AppData/pixel-photo-uploader/state` | `/data/state` | `config.json`, `catalog.csv`, `blocked.csv`, Log |
 | `/DATA/Media/Photos/_eingang-dropbox` | `/data/dropbox` | Spiegel von Dropbox `Camera Uploads` |
 | `/DATA/Media/Photos/_eingang-inbox` | `/data/inbox` | Spiegel von OneDrive `Eigene Aufnahmen` |
+| *(optional, auskommentiert)* | `/data/archive/_bestand` | alter Foto-Bestand, **nur lesend** mitlaufend |
 
 ### Beide Clouds anbinden (Variante A, empfohlen)
 
@@ -88,6 +89,40 @@ die echten Hostpfade tauschen. Bedingungen:
 - Re-Auth im Blick: Verschwindet ein Mount, meldet das Protokoll unerreichbare
   Ordner und der Zyklus wird beim nächsten Lauf nachgeholt — Daten gehen nicht
   verloren, es stapelt sich nur.
+
+### Alter Foto-Bestand: mitlaufen lassen, ohne zu kopieren
+
+Der Walk durch `/data/archive` ist rekursiv. Wer einen vorhandenen Foto-Bestand
+mitgeben will, **hängt ihn als Bind-Mount unter das Archiv** — die beiden
+auskommentierten Zeilen in `docker-compose.yml` sind genau dafür:
+
+```yaml
+- /media/Data_1/Pictures:/data/archive/_bestand:ro
+```
+
+Danach in der Web-UI **einmal „Vollabgleich"** einreihen. Ohne ihn bleibt der
+Bestand unsichtbar: der Grundabgleich überspringt Ordner, deren Schreibzeit älter
+als der letzte Lauf ist (Puffer 24 h), und ein eingeschworener Bestand ist per
+Definition alt.
+
+Vier Regeln, die diese Zeile trägt:
+
+- **`ro` ist die Sicherung, nicht Deko.** Der Mount hängt *im* Archivordner. Ohne
+  Read-only würde ein `rm -rf Archiv/_bestand` durch ihn hindurch den Bestand
+  löschen. Die App selbst schreibt dort nie hin.
+- **Niemals ein Eingangs-Feld auf den Bestand richten.** `DropboxRoot`,
+  `OneDriveRoot` und `InboxRoot` sind Quellen, **aus denen verschoben wird** —
+  der Import löscht die Quelldatei nach dem Umzug. Ein Bestand ist keine Quelle.
+- **Beide Dienste brauchen denselben Mount**, sonst rechnet der Server Batches ab,
+  die der Watcher nie katalogisiert hat.
+- **Neue Aufnahmen bleiben vorn.** Die Batch-Auswahl sortiert nach letzter
+  Schreibzeit; ein Bestand von 2001–2024 rutscht ans Ende und quetscht sich nie an
+  frischen Dateien vorbei.
+
+Was es kostet, ist allein die Menge: bei 5 GiB je Batch sind 1,6 TB rund 330
+Durchläufe, und der Pixel muss die meiste Zeit am Strom und im WLAN hängen. Eine
+Bestandsdatei wird nie verschoben oder gelöscht — nur gelesen und als Kopie in die
+Resilio-Freigabe gelegt.
 
 ## Installation auf ZimaOS (Custom Install)
 
