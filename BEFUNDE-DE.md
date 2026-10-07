@@ -1,12 +1,14 @@
 # Sync-Verhalten — Befunde, Regeln, offene Punkte
 
-Stand: 2026-10-07, 15:58 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
+Stand: 2026-10-07, 16:20 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
 Containern der ZimaOS (`192.168.178.162`), Companion **1.2.4** (versionCode 9) auf dem
 Upload-Pixel `FA69M0305152`. Die Zähler in §2, §6 und §8 sind an diesem Stand
 gemessen; die Monate-Aussage in §8 ist eine Hochrechnung **an der dort gemessenen**
-Upload-Rate und als solche gekennzeichnet. Neu seit der Fassung von 15:42 UTC: der
-„backup paused"-Stopp ist **wiederholt und gemessen** aufgetreten (§6, §7) — die
-Deutung in §7 ist entsprechend korrigiert, §9 hat dadurch eine Dringlichkeit bekommen.
+Upload-Rate und als solche gekennzeichnet — sie ist seit der 15-Minuten-Stichprobe von
+17:56–18:11 CEST **keine** belastbare Zahl mehr, siehe §9 Punkt 7. Neu seit der Fassung
+von 15:42 UTC: der „backup paused"-Stopp ist **wiederholt** aufgetreten und die Deutung
+in §7 ist korrigiert; mein zweiter Fehl-Tap auf den Einwilligungs-Haken (18:13:26) steht
+in §6, die Regel dazu in §7.
 
 ## 1. Ein Durchlauf, und zwar in dieser Reihenfolge
 
@@ -47,7 +49,8 @@ paused"-Fälle. `blocked.csv` nach Reason gelesen: 290 ×
 „Empty file - nothing for Google Photos to back up", alle mit Größe 0 (253 davon
 `2010 Brasilien/Iguacu`, 30 `Location/Karlsruhe`). Die laufen nie wieder ein und
 blockieren nichts — Task 6 (transiente Zustände neu einordnen) hat aktuell **keine**
-Ledger-Opfer, aber seit 17:29:22 einen Betriebsfall: §6 und §9.
+Ledger-Opfer, aber seit 17:29:22 einen **wiederholten** Betriebsfall: derselbe Stopp
+um 17:51:44 erneut, 98 s nach dem Zurücksetzen. Siehe §6, §7 und §9 Punkt 5.
 
 ## 3. Der Rückbeleg hat drei Urteile, nicht zwei
 
@@ -106,7 +109,7 @@ genau für diese Lücke da.
 | 13:41 | 15:41 | Freigabe von 97 Dateien war **erfolgreich** (logcat: `NoSuchFileException` für alle 97). |
 | 13:41–13:42 | | `repair_batches()` sah die via Resilio zurückgetragene Löschung, bevor der Beleg da war, und **kopierte alle 97 aus dem Archiv zurück** — inkl. neuem `StagedUtc`, die 72-h-Uhr wurde damit zurückgesetzt. |
 | 13:43 | | Build mit der härteren Kapazitätskante `room = capacity - held_bytes` deployt. |
-| 13:52 / 13:55 | 15:52:31 / 15:55:46 | von mir: Fehl-Tap auf den Sicherheits-Haken → „Überwachung pausiert", dann manuell neu gestartet. |
+| 13:52 / 13:55 | 15:52:31 / 15:55:46 | von mir: Fehl-Tap auf den Sicherheits-Haken → „Überwachung pausiert", dann manuell neu gestartet. **Passiert um 18:13:26 ein zweites Mal** — dieselbe Falle, unten in §10 steht jetzt die Regel dazu. |
 | 14:33 | 16:33:48 | 8 Dateien: zweimal „Nichts freizugeben" → Absage-Beleg. completed 287 → 392, staged 97 → 41, neuer Batch `20261007-143456` (14:34:56) sofort nachgelegt. |
 | 14:36 | 16:36:01 | **1.2.4 installiert** — Protokoll: „Bedienungshilfe verbunden." + „Überwachung lief nicht – wird neu gestartet.", danach normaler 30-s-Takt. |
 | 15:05 | 17:05:07 | 41 Dateien: Absage-Beleg → **completed 392 → 433**, staged 41 → 0, Batch-Ordner weg, neuer Batch `20261007-150538` mit 12 Dateien. |
@@ -124,6 +127,12 @@ genau für diese Lücke da.
 | 15:50:06 | 17:50:06 | App übergibt erneut **609 stabile Dateien** an Fotos; Fotos zeigt „Backing up photos". Der ganze Batch hing also 20 Minuten nutzlos in der Warteschleife, obwohl die Bytes längst liefen. |
 | 15:51:44 | 17:51:44 | **Derselbe Stopp nach 98 s wieder.** Protokoll: „Google Fotos meldet einen Sicherungsfehler („backup paused"). Es wurde nichts freigegeben." Kein Zufall, kein Kippel-vom-Bock: die Automatik steht nach jedem Zurücksetzen wieder exakt in diesen Zustand. |
 | 15:53 | 17:53 | Pill **„Backup paused"** (Wolke mit Pause-Zeichen). Aufgeklappt: **„Backing up 21 photos" / „Checking time remaining" / „Keep the app open for faster backup"**. Upload-Rate über je 55 s: 1,32 / 0,00 / 0,11 / 0,84 MiB/min. Genau das macht den Wortlaut unbrauchbar: derselbe Pill steht bei **0 MiB/min** wie bei **18 MiB/min** (§7). |
+| 15:56–16:11 | 17:56–18:11 | **Der lange Stich:** 15 Minuten `wlan0 tx` über zwei Punkte = **0,23 MiB/min** (0,203 GiB im Fenster). Zum Vergleich die drei Kurzstiche von 17:34–17:42: 13,3 / 13,4 / 18,6 MiB/min. Die Leitung war in dieser halben Stunde also **praktisch zu**, bei Bildschirm an, ohne Doze (`mWakefulness=Awake`, `deviceidle mState=ACTIVE`), Akku 100 % am Kabel, 44,2 °C. |
+| 16:05 | 18:05 | Pill jetzt **„Backup complete"** — während auf dem Telefon unverändert **256 MB + 4,7 GB** Batch liegen (`du`) und der belegte Speicher *steigt* (16.749.012 → 16.755.472 KB in einer Minute, Fotos schreibt Cache). `staged` auf der NAS weiter 609. Genau der Fall §7: der Abschluss-Text beweist nichts. |
+| 16:06–16:08 | 18:06–18:08 | Aufgeklapptes Backup-Blatt: **drei Minuten lang nur Spinner**. Fotos prüft seine Bibliotheksschlange, sagt aber „complete". |
+| 16:13:26 | 18:13:26 | **Zweiter Fehl-Tap von mir auf denselben Haken** (15:52 war der erste): Swipe + Blind-Tap auf `(780, 243)` — nach dem Swipe liegt dort die Einwilligungsbox, nicht der Knopf. Box leer → Protokoll „Überwachung pausiert". |
+| 16:14:30 | 18:14:30 | Box wieder gesetzt, „Überwachung starten" **mit frischem Screenshot vorher** getippt (275, 435). Protokoll: „Überwachung gestartet." |
+| 16:16:32 | 18:16:32 | App übergibt zum dritten Mal **609 stabile Dateien**; Service lebend (`app=ProcessRecord{…}`, `isForeground=true`). |
 
 **Was das für die Deutung heißt:** „Backup paused" ist auf diesem Gerät kein
 Fehlerzustand, sondern der **Idle-Zustand zwischen zwei Häppchen**. Fotos sichert in
@@ -186,10 +195,29 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   Backup-Blatt. Wer die Automatik über den Pill steuert, braucht einen Zähler statt eines
   Wortlauts: zweimal „paused" in Folge *ohne* dazwischen gesehenes „backing up" ist ein
   Stopp, alles andere ist Warteposition.
+- **Der Zähler für genau diesen Fall existiert schon — nur nicht auf dem Fehlerpfad.**
+  `noteStuck()` (`PhotosAccessibilityService.java:262-276`) arbeitet mit `stuckSince` und
+  lässt **30 Minuten** (`STUCK_MILLIS`, `:27`) vergehen, bevor es `PHASE_ERROR` meldet; der
+  Pfad „weder aktiv noch abgeschlossen" ist also bereits transient behandelt. Die 36
+  Fehler-Nadeln (`:128-144`) haben denselben Zähler **nicht** — sie gehen beim ersten
+  Treffer sofort in Endpunkt. Task 6 ist damit kein neuer Mechanismus, sondern: den
+  bestehenden auf den zweiten Pfad legen.
+- **Zurücksetzen ist nicht umsonst.** Nach dem Tap von 17:49:48 bietet die App alle 609
+  Dateien neu an (`17:50:06`), und das heißt: `scanner.mediaScan()` über 609 Dateien und
+  Fotos muss die Bibliotheksschlange neu prüfen („Checking time remaining"). Die Rate fiel
+  davon auf **1,32 / 0,00 / 0,11 / 0,84 / 0,69 / 0,68 / 1,91 / 1,16 MiB/min** (acht Stiche
+  à 55 s, 17:51–17:58 CEST, Mittel ~0,84) — nach 12,7–18,6 MiB/min vor dem Stopp. Ob das
+  der MediaScan allein ist oder Fotos' eigener Tag-Rhythmus, ist hier **nicht** entschieden;
+  entschieden ist nur die Reihenfolge: erst der Einbruch, nachdem neu übergeben war.
 - **Hinlangen heißt: Tap treffen und Protokoll lesen.** Der Kopfzeilen-Wechsel allein
   ist kein Beleg — `update()` schreibt nur den Text. Ein Handgriff an der App hat erst
   stattgefunden, wenn `companion-log.txt` eine neue Zeile hat (17:33 vs. 17:49:48 oben).
-  Knopfmitte der unteren Zeile auf dem Pixel 1: `(780, 243)` bei `wm size 1080x1920`.
+  **Es gibt keine feste Knopfkoordinate.** Die Knopfzeile sitzt direkt unter der
+  Einwilligungsbox, und die ganze Seite scrollt: mit Seite oben liegt „Fehler
+  zurücksetzen" bei `(780, 243)`, nach einem Swipe hoch auf dieselbe Höhe — und dann
+  trifft man den **Haken**, was die Überwachung pausiert. Also: **erst Screenshot, dann
+  Tippen, dann Protokollzeile als Beweis.** Zwei von mir selbst gemachte Fälle: 15:52:31
+  und 18:13:26.
 
 ## 8. Durchsatz: was die 1,6 TB praktisch bedeuten
 
@@ -205,12 +233,16 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   der ganze Bestand **~1.400–1.900 h ≈ zwei bis zweieinhalb Monate** Dauerbetrieb am
   Kabel. Drei Grenzen der Zahl: `wlan0 tx` zählt *allen* Sendeverkehr des Telefons
   (Obergrenze für den Anteil von Fotos), die Absage-Runden sind noch nicht drin, und —
-  die Messlatte selbst — **die Rate ist nicht stetig.** Vier Stunden später, über je
-  55 s gemessen (17:52–17:54 CEST): **1,32 / 0,00 / 0,11 MiB/min**. Fotos sichert in
-  Portionen („Backing up 21 photos") und lässt die Queue zwischendurch komplett los.
-  Die 0,8–1,1 GiB/h sind damit die **Spitzengeschwindigkeit**, nicht der Durchschnitt;
-  der Durchschnitt liegt über den Tag gemessen niedriger, und die Monate-Aussage ist
-  die **optimistische** Untergrenze.
+  die Messlatte selbst — **es gibt zwei Regime, nicht eine Rate.** Ein *langer* Stich über
+  volle 15 Minuten (17:56–18:11 CEST, zwei Punkte `wlan0 tx`) ergibt **0,23 MiB/min**, das
+  sind **0,014 GiB je Stunde** — bei Bildschirm an, ohne Doze, Akku voll am Kabel. Davor
+  lagen 12,7–18,6 MiB/min, danach acht Kurzstiche mit Mittel ~0,84. Die 0,8–1,1 GiB/h sind
+  also die **Spitzengeschwindigkeit im schnellen Regime**, und die zwei bis zweieinhalb
+  Monate gelten **nur dort**; im gemessenen langsamen Regime wären es Jahre. Welche der
+  beiden Ursachen das entscheidet, ist offen: Fotos drosselt je Tageszeit, oder jede
+  Neu-Übergabe (`mediaScan` über 609 Dateien) wirft die Schlange zurück — beides ist
+  beobachtet, keines ist bewiesen. **Bevor die Monatszahl jemandem als Plan verkauft wird,
+  gehört ihr ein Durchsatz-Protokoll über einen ganzen Tag.**
 - **Zwei Dateien bleiben außerhalb jeder 5-GiB-Kappe** (13,98 GiB ≈ 0,9 % aller Bytes):
   `Altbestand/2018.06 Astrid & Tobias Hochzeit/Freie Trauung/2018-06 Hochzeit Astrid
   und Tobias (11).avi` mit **8,17 GiB** und
@@ -233,8 +265,10 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 
 1. **Video-Kappe — die hast du selbst entschieden** (15:18:58 UTC auf 5,0 GiB). Offene
    Reste: die zwei Dateien über 5 GiB (13,98 GiB, §8) brauchen entweder 9 GiB Kappe —
-   bei 8,2 GiB freiem Phonespeicher geht das nicht — oder einen getrennten Weg. Und der
-   erste 5-GiB-Lauf muss zeigen, ob Fotos die Bibliotheksschlange dabei hält.
+   bei 8,2 GiB freiem Phonespeicher geht das nicht — oder einen getrennten Weg. Die
+   Frage, ob Fotos die Bibliotheksschlange bei 5 GiB hält, hat um 18:05 CEST **eine
+   vorläufige Antwort**: Pill „Backup complete", während unverändert 4,7 GB auf dem
+   Telefon liegen und nichts frei wird (§6).
 2. **Log-Flut — erledigt sich fast von selbst.** Bei 5,0 GiB Kappe sind es noch zwei
    Warnungen je Durchlauf (§8). Die gebündelte Meldung („N Dateien übersprungen,
    größte: X") wäre trotzdem die sauberere Lösung, ist aber kein Blocker mehr.
@@ -258,10 +292,12 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
      freizugeben" (`NOTHING_TO_FREE_ROUNDS = 2`, Retry nach 15 min).
    - `PHASE_ERROR` bleibt nur für echte Endfälle: Fotos nicht installiert, 72 h ohne
      Beleg, „account storage full".
-   - Die Gegenprobe braucht einen **Zähler statt eines Wortlauts**: als „aktiv" gezählt
-     wird nur, was die App im selben Fenster auch sieht. Neu dazu: „checking time
-     remaining" und „keep the app open" (beide stehen im aufgeklappten Backup-Blatt,
-     `:44-50`).
+   - Die Gegenprobe braucht einen **Zähler statt eines Wortlauts** — und den gibt es
+     schon: `noteStuck()` (`:262-276`) meldet einen unbekannten Bildschirm erst nach
+     `STUCK_MILLIS` = 30 min als Fehler. Auf den Nadel-Pfad (`:128-144`) ist derselbe
+     Zähler nie gelegt worden. **Task 6 ist also kein neuer Mechanismus, sondern eine
+     Zeile Verschiebung.** Dazu: „checking time remaining" und „keep the app open" in
+     `BACKUP_ACTIVE_NEEDLES` (`:44-50`), damit das aufgeklappte Backup-Blatt zählt.
    - Kleiner Eingriff in `PhotosAccessibilityService.inspect()`, braucht ein APK-Update
      und danach den einen Hand-Tap „Überwachung starten". Sag Bescheid, dann baue ich das.
 6. **Was die 5 GiB heute noch brauchen.** Der Batch läuft nicht mehr von allein durch:
@@ -269,6 +305,14 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
    zurücksetzen", damit die App den Dateibestand vergleicht und den Beleg schreibt.
    Der Beleg selbst ist nicht in Gefahr — `healReceiptFromDisk()` entscheidet über den
    Bestand, nicht über den Bildschirm.
+7. **Die größte offene Zahl: in welchem Regime läuft die Leitung eigentlich?** Gemessen
+   sind 0,8–1,1 GiB/h und 0,014 GiB/h **am selben Nachmittag** (§8). Solange das nicht
+   entschieden ist, ist jede Monats-Aussage über die 1,6 TB eine Silbe, kein Plan. Der
+   billigste Test, der die beiden Erklärungen trennt: **einmal nicht anfassen** — ein Tag
+   lang weder Reset noch `mediaScan` noch Screenshot-Taps, nur `staged`/`completed` und
+   `wlan0 tx` über Stunden mitschreiben. Fängt die Rate von allein wieder an, drosselt
+   Fotos nach Tageszeit; bleibt sie bei ~0, war es meine Neu-Übergabe. Den Lauf kann ich
+   aufsetzen, wenn du willst.
 
 ## 10. Messregeln, damit die nächste Sitzung nicht auf falschen Zahlen sitzt
 
