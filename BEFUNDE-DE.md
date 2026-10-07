@@ -1,10 +1,12 @@
 # Sync-Verhalten — Befunde, Regeln, offene Punkte
 
-Stand: 2026-10-07, 15:42 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
+Stand: 2026-10-07, 15:58 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
 Containern der ZimaOS (`192.168.178.162`), Companion **1.2.4** (versionCode 9) auf dem
 Upload-Pixel `FA69M0305152`. Die Zähler in §2, §6 und §8 sind an diesem Stand
 gemessen; die Monate-Aussage in §8 ist eine Hochrechnung **an der dort gemessenen**
-Upload-Rate und als solche gekennzeichnet.
+Upload-Rate und als solche gekennzeichnet. Neu seit der Fassung von 15:42 UTC: der
+„backup paused"-Stopp ist **wiederholt und gemessen** aufgetreten (§6, §7) — die
+Deutung in §7 ist entsprechend korrigiert, §9 hat dadurch eine Dringlichkeit bekommen.
 
 ## 1. Ein Durchlauf, und zwar in dieser Reihenfolge
 
@@ -114,9 +116,23 @@ genau für diese Lücke da.
 | 15:21 | 17:21 | Latenz-Messung über die Erhöhung hinweg: Marker in `control/` geschrieben, nach **135 s** auf dem Pixel sichtbar (Poll alle 5 s, beidseitig wieder gelöscht). |
 | ~15:28 | 17:28 | Beide Batches sind auf dem Pixel: `staging/Batches/20261007-150538` 256 MB, `…/20261007-151943` **4,7 GB** (`du`). Freier Phonespeicher damit **8,2 GiB** von 24 G (`df /data`, 66 % voll) — vorher 10,69 GiB. |
 | 15:29:16 | 17:29:16 | App übergibt **609 stabile Dateien** auf einmal an Fotos (beide Batches in einem Angebot; die 12 aus der Absage-Runde 1/2 sind dabei). |
-| 15:29:22 | 17:29:22 | **Fehlalarm:** App liest „backup paused" aus dem Bildschirm und geht in `PHASE_ERROR` — „Es wurde nichts freigegeben". |
-| 15:32 | 17:32 | Bildschirmkontrolle: Fotos zeigt **„Backing up photos"** — es lief gerade, nichts war pausiert. `PHASE_ERROR` ist **endgültig** (`BackupMonitorService.java:118` → „Angehalten: App öffnen"; `PhotosAccessibilityService.java:103` steigt in ERROR aus), die Leitung stand also still, während 5 GiB hochliefen. |
-| 15:33 | 17:33:52 | Von mir: „Fehler zurücksetzen" am Telefon (der dokumentierte Handgriff; löscht auch die Versuchs-Zähler). Service danach lebend: `app=ProcessRecord{…}`, `isForeground=true`. |
+| 15:29:22 | 17:29:22 | App liest „backup paused" aus dem Startschirm-Pill und geht in `PHASE_ERROR` — „Es wurde nichts freigegeben". **Korrektur meiner selbst:** das war **kein Fehllesen der App**, der Pill stand wirklich so (§7). |
+| 15:32 | 17:32 | Bildschirmkontrolle: Pill jetzt **„Backing up photos"** — der Upload lief wieder. `PHASE_ERROR` ist aber **endgültig** (`BackupMonitorService.java:118` → „Angehalten: App öffnen"; `PhotosAccessibilityService.java:103` steigt in ERROR aus), die Leitung stand also still, während die Bytes weiterliefen. |
+| 15:33 | 17:33:52 | Von mir: erster Tap auf „Fehler zurücksetzen" — **daneben** (y=320; die Knopfzeile endet bei y≈305, Mitte liegt bei 243). Der Service lief weiter (`app=ProcessRecord{…}`, `isForeground=true`), die Schleife blieb trotzdem in `PHASE_ERROR` stehen. |
+| 15:46 | 17:46 | Bildschirmkontrolle: unverändert „Aktiv: wegen Fehler angehalten", derselbe Detailtext von 17:29:22. Das ist der Beweis gegen meinen eigenen Handgriff — `AppState.phase()` (`AppState.java:43-51`) ruft *jedes* Mal `log()` auf, `log()` (`:133-142`) hängt bedingungslos an, und im gespiegelten Protokoll stand seit 17:29:22 **keine** Zeile. |
+| 15:49:48 | 17:49:48 | „Fehler zurücksetzen" **getroffen** (780, 243). Protokollzeile „Fehlerzustand manuell zurückgesetzt.", Kopfzeile wieder „Aktiv: Ordnerüberwachung". |
+| 15:50:06 | 17:50:06 | App übergibt erneut **609 stabile Dateien** an Fotos; Fotos zeigt „Backing up photos". Der ganze Batch hing also 20 Minuten nutzlos in der Warteschleife, obwohl die Bytes längst liefen. |
+| 15:51:44 | 17:51:44 | **Derselbe Stopp nach 98 s wieder.** Protokoll: „Google Fotos meldet einen Sicherungsfehler („backup paused"). Es wurde nichts freigegeben." Kein Zufall, kein Kippel-vom-Bock: die Automatik steht nach jedem Zurücksetzen wieder exakt in diesen Zustand. |
+| 15:53 | 17:53 | Pill **„Backup paused"** (Wolke mit Pause-Zeichen). Aufgeklappt: **„Backing up 21 photos" / „Checking time remaining" / „Keep the app open for faster backup"**. Upload-Rate über je 55 s: 1,32 / 0,00 / 0,11 / 0,84 MiB/min. Genau das macht den Wortlaut unbrauchbar: derselbe Pill steht bei **0 MiB/min** wie bei **18 MiB/min** (§7). |
+
+**Was das für die Deutung heißt:** „Backup paused" ist auf diesem Gerät kein
+Fehlerzustand, sondern der **Idle-Zustand zwischen zwei Häppchen**. Fotos sichert in
+Portionen („21 photos"), lässt die Queue zwischendurch los und sagt dann genau den Satz,
+den die App als Endpunkt interpretiert. Die 36 Nadeln in
+`PhotosAccessibilityService.java:128-137` können das nicht unterscheiden — auf dem
+Startschirm gibt es außer dem Pill keinen Text, der Fortschritt anzeigt. Die
+`BACKUP_ACTIVE_NEEDLES`-Gegenprobe (`:138`, u. a. „backing up") greift nur in der
+Sekunde, in der der Pill selbst auf „Backing up photos" steht.
 
 Gegenprobe auf der NAS, seit dem 3.3.17-Deploy: „Re-provided handover file"
 **konstant 307** (alle aus der Zeit davor), „waiting for its receipt before
@@ -148,11 +164,32 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   pausiert hat, wird nicht geweckt.
 - **`PHASE_ERROR` ist eine Sackgasse, kein Zustand mit Rückweg.** Nichts startet die
   Schleife daraus wieder — nur „Überwachung starten" oder „Fehler zurücksetzen" in der
-  App (`MainActivity.java:159/162`). Das ist tragisch, weil die Fehler-Erkennung
+  App (`MainActivity.java:159/162`). Das ist teuer, weil die Fehler-Erkennung
   **bildschirmtextbasiert** ist: 36 Nadeln (`PhotosAccessibilityService.java:128-137`)
-  entscheiden über Anhalten. „backup paused" stand am 07.10. um 17:29:22 auf dem
-  Bildschirm, während Fotos gerade 5 GiB hochlud. Ein Fehlalarm kostet also nicht eine
-  Runde, sondern die ganze Leitung, bis jemand hinlangt.
+  entscheiden über Anhalten.
+- **„backup paused" ist der Idle-Zustand zwischen zwei Portionen, nicht der
+  Fehlerzustand der Sicherung.** Das ist die Korrektur eines Satzes, den ich früher in
+  diese Datei geschrieben habe (und der dort in §6 jetzt dabeisteht): Ich hielt den Fund
+  um 17:29:22 für einen **Fehlalarm**, weil der Pill zwei Minuten später „Backing up
+  photos" zeigte. Nach dem zweiten Stopp um 17:51:44 und dem aufgeklappten Backup-Blatt
+  („Backing up 21 photos", „Checking time remaining", „Keep the app open for faster
+  backup") ist die Lesart eine andere: die App hat den Text **richtig** gelesen — der
+  Pill stand wirklich da. Falsch ist, was sie daraus macht. Beleg dafür, dass es trotzdem
+  voranging: zwischen dem Alarm von 17:29:22 und 15:45 UTC habe ich 12,7–18,6 MiB/min
+  gemessen, also ~13 Minuten Upload *während* `PHASE_ERROR`. Der Pill ist eine
+  Portionsanzeige, keine Leitungsaussage. Ein Zustand, der alle zwei Minuten wiederkommt,
+  darf die Automatik nicht anhalten; er darf höchstens die Runde neu zählen.
+- **Die Gegenprobe reicht nicht.** `BACKUP_ACTIVE_NEEDLES` (`:44-50`, u. a. „backing up",
+  „uploading", „items left") soll einen Alarm unterdrücken, wenn die Sicherung sichtbar
+  läuft. Auf dem Startschirm ist der Pill *derselbe* Text, der über Pause und Aktiv
+  entscheidet — es gibt dort keinen zweiten Text. Die Nadeln greifen erst im aufgeklappten
+  Backup-Blatt. Wer die Automatik über den Pill steuert, braucht einen Zähler statt eines
+  Wortlauts: zweimal „paused" in Folge *ohne* dazwischen gesehenes „backing up" ist ein
+  Stopp, alles andere ist Warteposition.
+- **Hinlangen heißt: Tap treffen und Protokoll lesen.** Der Kopfzeilen-Wechsel allein
+  ist kein Beleg — `update()` schreibt nur den Text. Ein Handgriff an der App hat erst
+  stattgefunden, wenn `companion-log.txt` eine neue Zeile hat (17:33 vs. 17:49:48 oben).
+  Knopfmitte der unteren Zeile auf dem Pixel 1: `(780, 243)` bei `wm size 1080x1920`.
 
 ## 8. Durchsatz: was die 1,6 TB praktisch bedeuten
 
@@ -166,8 +203,14 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   `wlan0`-Sendezähler (17:34–17:42 CEST) geben **13,3 / 13,4 / 18,6 MiB/min**, also
   **0,8–1,1 GiB je Stunde**. Ein 5-GiB-Batch braucht damit **~5–6 h** reine Uploadzeit,
   der ganze Bestand **~1.400–1.900 h ≈ zwei bis zweieinhalb Monate** Dauerbetrieb am
-  Kabel. Zwei Grenzen der Zahl: `wlan0 tx` zählt *allen* Sendeverkehr des Telefons
-  (Obergrenze für den Anteil von Fotos), und die Absage-Runden sind da noch nicht drin.
+  Kabel. Drei Grenzen der Zahl: `wlan0 tx` zählt *allen* Sendeverkehr des Telefons
+  (Obergrenze für den Anteil von Fotos), die Absage-Runden sind noch nicht drin, und —
+  die Messlatte selbst — **die Rate ist nicht stetig.** Vier Stunden später, über je
+  55 s gemessen (17:52–17:54 CEST): **1,32 / 0,00 / 0,11 MiB/min**. Fotos sichert in
+  Portionen („Backing up 21 photos") und lässt die Queue zwischendurch komplett los.
+  Die 0,8–1,1 GiB/h sind damit die **Spitzengeschwindigkeit**, nicht der Durchschnitt;
+  der Durchschnitt liegt über den Tag gemessen niedriger, und die Monate-Aussage ist
+  die **optimistische** Untergrenze.
 - **Zwei Dateien bleiben außerhalb jeder 5-GiB-Kappe** (13,98 GiB ≈ 0,9 % aller Bytes):
   `Altbestand/2018.06 Astrid & Tobias Hochzeit/Freie Trauung/2018-06 Hochzeit Astrid
   und Tobias (11).avi` mit **8,17 GiB** und
@@ -204,14 +247,28 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
    /DATA/AppData/pixel-photo-uploader/pixelsync` — 1,19 GB Alt-Kopie außerhalb von
    Resilios Sync-Wurzel — und die Compose-Kopien auf der NAS nachziehen: sie driften
    vom Repo, deployt wird deshalb aus `/tmp`.
-5. **Task 6 hat jetzt ein lebendes Opfer.** Die Ledger-Opfer-Frage aus §2 ist weiter
-   unverändert (keine falsche Buchung), aber der **Betriebsfall** ist da: 17:29:22
-   Fehlalarm „backup paused", Leitung still, während 5 GiB wirklich hochluden (§6/§7).
-   Der Entwurf: ein Bildschirmtext-Fehler ist **transient** — Retry in 15 min wie bei
-   „Nichts freizugeben", `PHASE_ERROR` nur noch für echte Endfälle (nicht installiert,
-   72 h nicht fertig). Kleiner Eingriff in `PhotosAccessibilityService.inspect()`,
-   braucht aber ein APK-Update und danach den einen Hand-Tap. Sag Bescheid, dann baue
-   ich das.
+5. **Task 6 — jetzt mit Grund, nicht mehr mit Verdacht.** Der Betriebsfall ist
+   wiederholt und gemessen (§6: 17:29:22, dann nach Zurücksetzen 17:51:44 erneut, Rate
+   danach 1,32 / 0,00 / 0,11 MiB/min). Die Leitungsfolge: **ohne Fix ist der Betrieb nicht
+   mehr unbeaufsichtigt.** Irgendwann steht die Automatik in `PHASE_ERROR`, und nur ein
+   Hand-Tap holt sie raus — bei jedem Batch, mehrfach.
+   Der Entwurf hat sich durch die Messung verschärft:
+   - „backup paused" ist **kein Fehler**, sondern Fotos' Idle zwischen zwei Portionen.
+     Er darf die Runde nur zählen, nicht die Leitung anhalten — wie bei „Nichts
+     freizugeben" (`NOTHING_TO_FREE_ROUNDS = 2`, Retry nach 15 min).
+   - `PHASE_ERROR` bleibt nur für echte Endfälle: Fotos nicht installiert, 72 h ohne
+     Beleg, „account storage full".
+   - Die Gegenprobe braucht einen **Zähler statt eines Wortlauts**: als „aktiv" gezählt
+     wird nur, was die App im selben Fenster auch sieht. Neu dazu: „checking time
+     remaining" und „keep the app open" (beide stehen im aufgeklappten Backup-Blatt,
+     `:44-50`).
+   - Kleiner Eingriff in `PhotosAccessibilityService.inspect()`, braucht ein APK-Update
+     und danach den einen Hand-Tap „Überwachung starten". Sag Bescheid, dann baue ich das.
+6. **Was die 5 GiB heute noch brauchen.** Der Batch läuft nicht mehr von allein durch:
+   Er braucht entweder den Fix aus Punkt 5, oder gegen Ende einen Tap auf „Fehler
+   zurücksetzen", damit die App den Dateibestand vergleicht und den Beleg schreibt.
+   Der Beleg selbst ist nicht in Gefahr — `healReceiptFromDisk()` entscheidet über den
+   Bestand, nicht über den Bildschirm.
 
 ## 10. Messregeln, damit die nächste Sitzung nicht auf falschen Zahlen sitzt
 
@@ -236,7 +293,13 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 - Kein `uiautomator dump`, Screenshots nur nach `/data/local/tmp` — alles andere
   landet im MediaStore und wird von der App als neuer Ordner behandelt.
 - Fortschritt am Telefon über `awk '/wlan0/{print $10}' /proc/net/dev` — **Feld 10 ist
-  tx**, Feld 9 ist multicast. Ein Zwei-Punkte-Fenster (60–180 s) reicht; kürzer streut.
+  tx**, Feld 9 ist multicast. **Aber: kurz ist wertlos.** Fotos sichert in Portionen, ein
+  55-s-Fenster hat 0,00 MiB/min gezeigt, während in den 13 Minuten drumherum 12–18 MiB/min
+  liefen. Für eine Rate braucht es ein Fenster von **mindestens 15 Minuten**, oder besser
+  den Differenzwert zweier `/api/status`-Stiche (`staged`/`completed`) über eine Stunde.
+- Den Startschirm-Pill **nicht** als An/Aus der Leitung lesen: „Backup paused" ist dort
+  Portionsanzeige, kein Ausfall (§7). Beweiskräftig sind nur der `wlan0`-Zähler über ein
+  langes Fenster und der Dateibestand.
 - „Free up space" in Google Fotos **nie von Hand** bestätigen: das löscht
   Telefon-Medien. Dafür ist die App da, und die macht das nur nach ihrer Haken-Abfrage.
 - Fingerabdruck-Schlüssel überall: `NNNNNN-<fp12>.ext`, der Zwölfer-Teil ist die
