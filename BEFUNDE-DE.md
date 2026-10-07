@@ -1,6 +1,6 @@
 # Sync-Verhalten — Befunde, Regeln, offene Punkte
 
-Stand: 2026-10-07, 16:20 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
+Messstand: 2026-10-07, 16:47 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
 Containern der ZimaOS (`192.168.178.162`), Companion **1.2.4** (versionCode 9) auf dem
 Upload-Pixel `FA69M0305152`. Die Zähler in §2, §6 und §8 sind an diesem Stand
 gemessen; die Monate-Aussage in §8 ist eine Hochrechnung **an der dort gemessenen**
@@ -8,7 +8,35 @@ Upload-Rate und als solche gekennzeichnet — sie ist seit der 15-Minuten-Stichp
 17:56–18:11 CEST **keine** belastbare Zahl mehr, siehe §9 Punkt 7. Neu seit der Fassung
 von 15:42 UTC: der „backup paused"-Stopp ist **wiederholt** aufgetreten und die Deutung
 in §7 ist korrigiert; mein zweiter Fehl-Tap auf den Einwilligungs-Haken (18:13:26) steht
-in §6, die Regel dazu in §7.
+in §6, die Regel dazu in §7. **Zum ersten Mal in Produktion gezündet hat um 16:23–16:39
+UTC der Schonfrist-Pfad:** 503 Handreichungskopien waren weg, kein Beleg kam, nach 600 s
+legte der Uploader alle 503 aus dem Archiv nach (knapp über 4 GiB) — das ist der Burst,
+hinter dem deine „über 4 GB wiedergefunden" stehen. §6 hat die Zählung, §9 Punkt 6 die
+offene Frage, wer die Kopien gelöscht hat. Das Telefon war ab ~16:30 UTC für mich nicht
+mehr erreichbar; die Telefonseite des Vorgangs ist unbewiesen.
+
+## Korrektur vom 2026-10-07: „Nichts freizugeben" ist unbestätigt
+
+Die frühere Deutung in diesem Dokument, ein zweifaches „Nichts freizugeben" beweise
+bereits vorhandene Google-Fotos-Inhalte, war zu weitgehend. Der beobachtete Zustand
+„Backup complete" bei gleichzeitig noch lokal vorhandenen Batchdateien zeigt, dass
+dieser Text keinen abgeschlossenen Upload für genau diese Dateien belegt.
+
+- Nur tatsächlich verschwundene überwachte Dateien nach der Freigabe erzeugen einen
+  Erfolgsbeleg in `completed.csv`.
+- `refusedPaths` werden als unbestätigt nach `blocked.csv` verschoben. Die lokale
+  Archiv-Kopie bleibt erhalten und die Handreichung wird freigegeben.
+- Alte `completed.csv`-Zeilen mit dem Grund
+  `Google Photos already holds this content (nothing to free up)` sowie direkt daraus
+  abgeleitete SHA-256-Duplikatbuchungen werden in `blocked.csv` migriert.
+- `backup paused`, Netzwerk-Wartezustände und Offline-Hinweise führen zunächst über
+  den 30-Minuten-Stillstandsmechanismus statt unmittelbar in den terminalen Fehler.
+- Ein unterbrochener `Copying`-Transfer kann nicht wegen leerem `StagedUtc` sofort
+  ablaufen. Reparaturen setzen den ursprünglichen Beginn der Handreichung nicht zurück.
+
+Die folgenden Produktionszahlen und Ereignisse beschreiben den damaligen Stand und
+gelten nicht als Beleg, dass die früher als „Absage" gebuchten Dateien erfolgreich
+gesichert wurden.
 
 ## 1. Ein Durchlauf, und zwar in dieser Reihenfolge
 
@@ -21,9 +49,9 @@ gleichzeitig gehen nicht: `acquire()` hält eine Sperre, der zweite wirft
 | `preflight` | Schreibprobe in die Übergabe, Batches und Belege zählen | nach dem ersten Pass ohne Schreibprobe — eine Probe pro Minute hält Resilio unnötig busy |
 | `run_import` | Dropbox/OneDrive/Eingang sortieren, Duplikate per SHA-256 | Cloud-Eingänge werden beim Import **geleert** (bewusst, so entschieden am 2026-10-05) |
 | `reconcile` | Archiv-Katalog abgleichen | Grundabgleich alle `RescanMinutes` (360), Vollabgleich alle `DeepRescanDays` (30); dazwischen nur gemeldete Pfade |
-| `migrate_refusal_blocks` | alte 3.3.15-Absagen aus `blocked.csv` um buchen | Aufräumen, kein Regelbetrieb |
+| `migrate_refusal_blocks` | alte unbelegte Absagen aus den Ledgern nach `blocked.csv` verschieben | Aufräumen, kein Regelbetrieb |
 | `confirm_staged` | Erfolgsbelege abrechnen | **vor** der Nachlage |
-| `settle_refused` | Absagebelege als „bereits gesichert" buchen | **vor** der Nachlage |
+| `settle_refused` | Absagebelege als unbestätigt blockieren und freigeben | **vor** der Nachlage |
 | `expire_staged` | Handreichungen ohne Beleg nach 72 h freigeben | **vor** der Nachlage |
 | `repair_batches` | fehlende Handreichungskopien aus dem Archiv ersetzen | zuletzt, und mit Schonfrist |
 | `select_and_stage_batch` | neue Dateien einreihen | braucht die freie Restkapazität aus den drei Schritten davor |
@@ -37,7 +65,7 @@ abgerechnet ist, braucht keine Kopie zurück.
 |---|---|---|
 | `catalog.csv` | jede Datei im Archiv (inkl. Altbestand) | 178.099 |
 | `staged.json` | offene Handreichungen aufs Telefon | 609 Dateien in **zwei** Batches: `20261007-150538` (12 / 0,25 GiB) und `20261007-151943` (597 / 4,75 GiB) |
-| `completed.csv` | gesicherte Fingerabdrücke mit Grund | 434 = **299 Absagen** + 134 echte Freigaben + 1 Duplikat-Buchung |
+| `completed.csv` | gesicherte Fingerabdrücke mit Grund | Historischer Messstand; 299 frühere Absagen sind nicht als bewiesene Backups anzusehen |
 | `blocked.csv` | dauerhaft aus der Queue | 290 — **ausnahmslos 0-Byte-Dateien** |
 
 `open_stable` 177.371 Dateien / 1.539,7 GiB. Log: `PixelPhotoUploader.log` im
@@ -57,7 +85,7 @@ um 17:51:44 erneut, 98 s nach dem Zurücksetzen. Siehe §6, §7 und §9 Punkt 5.
 | Urteil | Auslöser auf dem Telefon | Buchung |
 |---|---|---|
 | **Freigegeben** | Google Fotos entfernt die Datei wirklich, App vergleicht den Dateibestand | `completed.csv`, Grund „Android receipt after confirmed Google Photos free-up" |
-| **Abgelehnt** | zweimal in Folge „Nichts freizugeben" (Runden 15 min auseinander) | `completed.csv`, Grund „Google Photos already holds this content (nothing to free up)" — Google hält den Inhalt schon, meist von einem anderen Gerät |
+| **Nicht freigegeben / unbestätigt** | zweimal in Folge „Nichts freizugeben" | `blocked.csv`, eigener Grund; Handreichung freigeben, Archiv-Kopie bleibt |
 | **Kein Beleg** | nach `BackupTimeoutHours` = 72 h nichts eingetroffen | `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt |
 
 Vierte Buchung, ohne Google-Fotos-Urteil: beim Einreihen vergleicht der Server die
@@ -65,9 +93,9 @@ SHA-256 mit dem Ledger und bucht inhaltliche Zwillinge sofort
 (`batches.py:459`, Grund „Identical content already completed"). Genau so entstand der
 eine Duplikat-Eintrag oben.
 
-Das dritte Urteil ist der Grund, dass die Leitung überhaupt läuft: für Inhalte, die
-Google Fotos schon besitzt, kann der Erfolgsfall „Datei verschwindet vom Telefon" nie
-eintreten. Vor 3.3.16 endeten solche Dateien in `blocked.csv` und hielten die Queue.
+Die frühere Annahme, eine Absage beweise bereits vorhandenen Google-Fotos-Inhalt, ist
+mit dem oben ergänzten Produktionsbefund verworfen. Ein SHA-256-Duplikat gilt nur dann
+als abgeschlossen, wenn seine Ursprungsbuchung einen belastbaren Erfolgsbeleg hat.
 
 ## 4. Der Übertragungsweg ist der eigentliche Gegner
 
@@ -133,6 +161,11 @@ genau für diese Lücke da.
 | 16:13:26 | 18:13:26 | **Zweiter Fehl-Tap von mir auf denselben Haken** (15:52 war der erste): Swipe + Blind-Tap auf `(780, 243)` — nach dem Swipe liegt dort die Einwilligungsbox, nicht der Knopf. Box leer → Protokoll „Überwachung pausiert". |
 | 16:14:30 | 18:14:30 | Box wieder gesetzt, „Überwachung starten" **mit frischem Screenshot vorher** getippt (275, 435). Protokoll: „Überwachung gestartet." |
 | 16:16:32 | 18:16:32 | App übergibt zum dritten Mal **609 stabile Dateien**; Service lebend (`app=ProcessRecord{…}`, `isForeground=true`). |
+| 16:23:41 | 18:23:41 | **Ein echter Beleg kommt durch:** „106 files confirmed via Android receipts", completed 434 → **540**, zwei Batches schrumpfen auf 11 bzw. 492 Restdateien. staged 609 → 503. |
+| 16:23:41–16:28:06 | 18:23–18:28 | Derselbe Durchlauf meldet **503×** „Handover copy is gone; waiting for its receipt before restocking" — das sind **alle** noch staged verbliebenen Dateien (609 − 106 = 503). Beide Batch-Ordner sind auf der NAS leer, ohne Beleg. |
+| — ab 16:30 | — | **Das Telefon ist für mich nicht mehr erreichbar:** kein USB-Gerät, `adb mdns services` bietet nur ein anderes Gerät an (`5C230DLCH003RC`, das ich laut Auftragsgrenze **nicht** anrühre), `192.168.178.53` offline und 100 % Paketverlust. Die Telefonseite dieses Vorgangs ist daher **unbewiesen**. |
+| 16:34:24–16:39:27 | 18:34–18:39 | Schonfrist abgelaufen (`REPAIR_GRACE_SECONDS = 600`, `batches.py:410`): **503× „Re-provided handover file"** — der komplette Rest wird aus dem Archiv zurückgelegt. staged bleibt 541 (die 38 Neudateien von 16:23:49 kommen dazu), completed bleibt 540. |
+| 16:40–16:46 | 18:40–18:46 | Ruhig: keine einzige „gone"- oder „Re-provided"-Zeile mehr, nur „541 files still wait for their Android receipt." Die neu gelegten Kopien **bleiben also liegen** — der Nachschub hat gehalten, es ist kein Dauerloop. |
 
 **Was das für die Deutung heißt:** „Backup paused" ist auf diesem Gerät kein
 Fehlerzustand, sondern der **Idle-Zustand zwischen zwei Häppchen**. Fotos sichert in
@@ -143,12 +176,46 @@ Startschirm gibt es außer dem Pill keinen Text, der Fortschritt anzeigt. Die
 `BACKUP_ACTIVE_NEEDLES`-Gegenprobe (`:138`, u. a. „backing up") greift nur in der
 Sekunde, in der der Pill selbst auf „Backing up photos" steht.
 
-Gegenprobe auf der NAS, seit dem 3.3.17-Deploy: „Re-provided handover file"
-**konstant 307** (alle aus der Zeit davor), „waiting for its receipt before
-restocking" 0. Der Burst ist also nicht weiter aufgetreten; der Schonfrist-Pfad
-selbst hat in Produktion noch nie gezündet — er ist durch Tests belegt
-(`tests/test_batches.py`, `tests/test_sync.py`) und meldet sich, sobald eine echte
-Freigabe dem Beleg zuvorkommt.
+Gegenprobe auf der NAS — **und die widerlegt, was hier seit 15:42 UTC stand.** Bis 16:23
+UTC war der Stand: „Re-provided handover file" konstant 307 (alle aus der Zeit vor dem
+3.3.17-Deploy), „waiting for its receipt before restocking" 0, also: Schonfrist-Pfad noch
+nie in Produktion. **Seit 16:23:41 UTC ist das falsch.** Gezählt aus `/api/log?lines=4000`:
+**503× „Handover copy is gone; waiting for its receipt before restocking"**
+(16:23:41–16:28:06) und **503× „Re-provided handover file"** (16:34:24–16:39:27). Es sind
+dieselben 503 — und es ist exakt der Rest beider Batches nach der Buchung von 16:23:41
+(11 + 492 = 503). **Gemessen auf der NAS** (16:47 UTC, `ls -l`/`du` in
+`/DATA/AppData/resilio-sync/data/pixelsync/staging/Batches`): der Ordner
+`20261007-151943` = **494 Einträge / 4,3 GB**, `20261007-150538` = 13 Einträge / 256 MB,
+dazu der neue `20261007-162349` = 40 / 497 MB. Der Nachschub war also **~4,6 GB** in den
+beiden alten Ordnern. Was dazu passt: du hast um dieselbe Zeit **„über 4 GB"**
+wiedergefunden — das sind genau diese Dateien, die der Uploader um 16:34–16:39 UTC aus
+dem Archiv zurückgelegt hat, nicht neue Bestandsdateien.
+
+Der Schonfrist-Pfad hat damit **nicht** gerettet, sondern nur **verzögert**: 10 Minuten
+zwischen „Kopie weg" und „Kopie zurück", und in den 10 Minuten kam kein Beleg für die
+503. Zwei getrennte Fragen, beide offen:
+1. **Wer hat die 503 Kopien gelöscht?** Ausgeschlossen ist der Uploader selbst:
+   `_retarget_batch()` (`batches.py:160-169`) macht bei verbleibenden Dateien **nur** neue
+   Marker, `_remove_batch_dir()` läuft ausschließlich bei leerem Rest — und beide Batches
+   hatten Rest (11 bzw. 492). Ausgeschlossen ist auch die App: in
+   `BackupMonitorService.java` gibt es **keinen** Lösch-Aufruf (`grep -E
+   "delete|unlink|purge"` = 0 Treffer). Bleibt: die Löschung kam als Peer-Änderung über
+   Resilio vom Telefon. Zwei Kandidaten dort — Google Fotos' eigene Speicherfreigabe (sie
+   sagte um 18:05 CEST „Backup complete", während per `du` noch 256 MB + 4,7 GB lagen;
+   hätte sie danach das Verzeichnis geleert, hätte sie Dateien gelöscht, die sie **nie**
+   gesichert hat) oder Phonespeicher-Druck (nach der Batch-Füllung waren es 8,2 GiB frei
+   von 24 G). **Beides unbewiesen:** seit ~16:30 UTC ist das Telefon für mich nicht
+   erreichbar (kein USB, kein mDNS-Angebot — `adb` bietet nur `5C230DLCH003RC` an, das
+   Pixel 10 Pro, das ich nicht anrühre — `192.168.178.53` offline/100 % Paketverlust).
+   Der Resilio-Log auf der NAS hilft dabei nicht, siehe §10: seine `deleted`-Zeilen sind
+   interne Transfer-Objekte, keine Löschungen.
+2. **Reicht `REPAIR_GRACE_SECONDS = 600`?** Für diesen Fall: nein. Der Beleg für 106
+   Dateien kam in demselben Durchlauf, in dem die anderen 503 als verschwunden galten —
+   die 503 hatten ihren Beleg aber noch gar nicht, und der kommt erfahrungsgemäß später
+   als eine Freigabe-Welle. Eine längere Schonfrist würde hier nichts ändern, solange der
+   Beleg *nie* kommt: was fehlt, ist die Unterscheidung „Telefon hat das Batch-Verzeichnis
+   geleert" (dann: Beleg erzwingen bzw. Bestand prüfen) gegen „Resilio ist langsam" (dann:
+   warten). Siehe §9.
 
 Telefonseitig nach dem Recreate lag **ein** Batch-Ordner `20261007-150538` mit 14
 Einträgen (12 Dateien + Manifest + Bereitschaftsmarker) — die 0,5-GiB-Doppelfüllung des
@@ -275,13 +342,16 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 3. **inotify-Limit — ist erledigt.** Host und Container lesen 524288 / 512, Resilio
    läuft seit dem Boot um ~06:53 UTC damit. Die neue Latenzmessung (135 s) zeigt aber:
    der Weg ist dadurch nicht schlagartig schneller geworden. Die 600-s-Schonfrist
-   bleibt also richtig begründet; ein zweiter Messlauf über mehrere Tageszeiten wäre
-   die Voraussetzung, sie zu verkürzen.
+   bleibt also richtig begründet — **aber sie rettet nicht, sie verzögert nur:** um
+   16:23:41 UTC hat sie 503 Dateien zehn Minuten gehalten, der Beleg kam in diesen zehn
+   Minuten nicht, und um 16:34:24 UTC hat der Uploader alle 503 zurückgelegt (§6, §9
+   Punkt 6). Ein zweiter Messlauf über mehrere Tageszeiten wäre die Voraussetzung, sie zu
+   verkürzen — oder zu verlängern.
 4. **Deine Handarbeit (sudo, nur bei dir):** `sudo rm -rf
    /DATA/AppData/pixel-photo-uploader/pixelsync` — 1,19 GB Alt-Kopie außerhalb von
    Resilios Sync-Wurzel — und die Compose-Kopien auf der NAS nachziehen: sie driften
    vom Repo, deployt wird deshalb aus `/tmp`.
-5. **Task 6 — jetzt mit Grund, nicht mehr mit Verdacht.** Der Betriebsfall ist
+5. **Task 6 — umgesetzt in 3.3.18 / Companion 1.2.5.** Der Betriebsfall ist
    wiederholt und gemessen (§6: 17:29:22, dann nach Zurücksetzen 17:51:44 erneut, Rate
    danach 1,32 / 0,00 / 0,11 MiB/min). Die Leitungsfolge: **ohne Fix ist der Betrieb nicht
    mehr unbeaufsichtigt.** Irgendwann steht die Automatik in `PHASE_ERROR`, und nur ein
@@ -298,13 +368,29 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
      Zähler nie gelegt worden. **Task 6 ist also kein neuer Mechanismus, sondern eine
      Zeile Verschiebung.** Dazu: „checking time remaining" und „keep the app open" in
      `BACKUP_ACTIVE_NEEDLES` (`:44-50`), damit das aufgeklappte Backup-Blatt zählt.
-   - Kleiner Eingriff in `PhotosAccessibilityService.inspect()`, braucht ein APK-Update
-     und danach den einen Hand-Tap „Überwachung starten". Sag Bescheid, dann baue ich das.
+   - `backup paused` und Netzwerk-Wartezustände laufen jetzt über `noteStuck()`;
+     „checking time remaining" und „keep the app open" gelten als Aktivität.
 6. **Was die 5 GiB heute noch brauchen.** Der Batch läuft nicht mehr von allein durch:
    Er braucht entweder den Fix aus Punkt 5, oder gegen Ende einen Tap auf „Fehler
    zurücksetzen", damit die App den Dateibestand vergleicht und den Beleg schreibt.
-   Der Beleg selbst ist nicht in Gefahr — `healReceiptFromDisk()` entscheidet über den
-   Bestand, nicht über den Bildschirm.
+   **Das ist um 16:23–16:39 UTC zum ersten Mal teuer geworden:** für 106 Dateien kam der
+   Beleg, für die übrigen **503** kam er nie — nach der 600-s-Schonfrist hat der Uploader
+   sie alle aus dem Archiv zurückgelegt (~4,6 GB, gemessen; §6). `healReceiptFromDisk()`
+   entscheidet zwar über den Bestand und nicht über den Bildschirm, aber heilen kann er
+   nur, was er noch auf dem Gerät findet: wenn das Telefon das Batch-Verzeichnis geleert
+   hat, bevor die Sicherung durch war, ist der Bestand weg und der Beleg kann ihn nicht
+   mehr melden.
+   **Neue offene Frage, dein Urteil:** was soll der Uploader mit einer Handreichung, deren
+   Kopien am Stück verschwinden und für die nach der Schonfrist kein Beleg da ist? Heute:
+   still aus dem Archiv nachlegen (§6, 503×). Alternativen: (a) Schonfrist **rauf** auf
+   z. B. 30–60 min, (b) nach der Schonfrist den **Beleg erzwingen** statt nachlegen
+   (ein `refusedPaths`-ähnliches Urteil „Verzeichnis vom Telefon geleert, ohne
+   Freigabebeleg" → `blocked.csv`, Archiv bleibt, keine Doppel-Last für Fotos), oder
+   (c) nachlegen, aber die Datei **einmal** als „zweite Handreichung" zählen, damit der
+   dritte Durchlauf nicht nochmal 4 GB nachschiebt. Meine Empfehlung: **(b) plus (c)** —
+   Nachlegen ist bei 5-GiB-Batches die teuerste Antwort auf ein Telefon, das schon
+   geleert hat, und ohne Zähler läuft die Pipeline in genau dem Loop, der Fotos' Queue
+   jedes Mal neu füllt.
 7. **Die größte offene Zahl: in welchem Regime läuft die Leitung eigentlich?** Gemessen
    sind 0,8–1,1 GiB/h und 0,014 GiB/h **am selben Nachmittag** (§8). Solange das nicht
    entschieden ist, ist jede Monats-Aussage über die 1,6 TB eine Silbe, kein Plan. Der
@@ -318,12 +404,21 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 
 - Zustand zuerst über `GET :8088/api/status` und `GET :8088/api/log?lines=N` — beide
   rein lesend, kein SSH nötig. `POST /api/sync` würde dagegen echt einen Pass anstossen.
-- **„Speichern" im Web-UI ist kein Teil-Update:** `apply_setup()` baut die Konfiguration
-  aus `DEFAULTS` nach (`setup.py:58`) und überschreibt nur die elf Formularfelder. Alles,
-  was nicht im Formular steht (`ReserveGiB`, `BackupPollSeconds`, `ScanGraceMinutes`,
-  `RemoteRoot`, `KeepAwake`, `RequireUnlocked`), liegt danach wieder auf dem Default —
-  und ein Feld, das im Browser noch offen ist, speichert den **alten** Wert. Nach jedem
-  Speichern `/api/status` gegenlesen.
+- **Die Handreichungsordner kann man auf der NAS direkt messen** (SSH mit
+  `-i ~/.ssh/id_ed25519_zimaos`): `/DATA/AppData/resilio-sync/data/pixelsync/staging/Batches`
+  — `ls -1 | wc -l` und `du -sh` je Ordner. Das ist die einzige Instanz, die zwischen
+  „Beleg gebucht" und „Kopie wirklich weg" unterscheiden kann. Zähler-Plauschregel:
+  Einträge je Ordner = Dateien + 2 Marker (`_batch-manifest.json`, `_batch-ready.txt`).
+- **`docker logs resilio-sync` beweist keine Löschung.** Die Zeilen
+  `TF[…][/pfad]: check can delete: fs_refs = 0` und `TF[…][/pfad]: deleted` sind die
+  **Wegnahme interner Transfer-Objekte**, kein `unlink` auf der Platte — sie erscheinen
+  Minuten, nachdem ein Transfer fertig ist, und zwar für Dateien, die unverändert
+  dastehen. Ich hätte darauf fast gebaut: 16:24 „40 deleted" im gerade gelegten Batch
+  `20261007-162349`, und derselbe Ordner hat um 16:47 wieder 40 Einträge. `OnNotifyFileDeleted`
+  (inotify) taucht im Log **0×** auf — wer löschen will, muss die Ordner selbst zählen.
+- `apply_setup()` übernimmt jetzt die gespeicherte Konfiguration als Basis und ändert
+  nur die sichtbaren Felder. Versteckte Werte wie `ReserveGiB`, `KeepAwake` und
+  `RequireUnlocked` bleiben erhalten.
 - Log-Zeitstempel: NAS **UTC**, Telefon-Protokoll **CEST**.
 - Im Log erst `grep -v "Single file larger than batch capacity"`, dann lesen.
 - In den Containern lesen ohne Shell-Chaos:
