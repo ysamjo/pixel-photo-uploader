@@ -34,6 +34,9 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 7. **Eine Absage ist ein Urteil, kein Fehler:** Sagt Google Fotos zweimal „Nichts freizugeben", hält es den Inhalt schon (meist von einem anderen Gerät). Die Datei kommt als *bereits gesichert* in `completed.csv`, nicht in `blocked.csv`, und die Queue läuft sofort weiter.
 8. **Erst der Beleg, dann die Nachlage:** Fehlt eine Handreichungskopie im Batch-Ordner, wartet der Server zehn Minuten auf den Rückbeleg, bevor er aus dem Archiv nachlegt. Resilio trägt die Löschung einer gelungenen Speicherfreigabe schneller zurück, als der Beleg des Pixels läuft – ein sofortiges Nachlegen würde die Freigabe des Telefons selbst rückgängig machen.
 
+Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
+**[BEFUNDE-DE.md](BEFUNDE-DE.md)** — Sync-Verhalten, gemessen am Stand 2026-10-07.
+
 ## Paketinhalt
 
 ```

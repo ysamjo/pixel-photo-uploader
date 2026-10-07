@@ -1,0 +1,99 @@
+# mastodon-kindle als Container auf ZimaOS.
+#
+# Diese Datei ist fuer den App-Manager von ZimaOS gedacht: im Web-Interface
+# unter "Install a customized app" den Inhalt einfuegen. Sie haelt sich an die
+# Regeln, die ZimaOS an eine App-Definition stellt:
+#
+#   * kein "build:"          - ZimaOS installiert nur fertige Images
+#   * kein "$" in Werten     - ZimaOS setzt Variablen selbst ein und wuerde
+#                              eigene Platzhalter zerstoeren
+#   * port_map als Zeichenkette, nicht als Zahl
+#   * dauerhafte Daten unter /DATA/AppData/<name>/
+#
+# Das Image muss also vorher auf dem NAS liegen:
+#
+#   cd /DATA/AppData/mastodon-kindle
+#   docker build -t mastodon-kindle:0.2.0 .
+#
+# Wer das Projekt woanders baut und in eine Registry schiebt, traegt unten bei
+# "image:" einfach den Registry-Namen ein.
+#
+# Fuer einen gewoehnlichen Docker-Host (macOS, Linux, Windows) gibt es
+# stattdessen docker-compose.local.yml.
+
+name: mastodon-kindle
+
+services:
+  mastodon-kindle:
+    image: mastodon-kindle:0.2.0
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - target: 8765
+        published: "8765"
+        protocol: tcp
+    environment:
+      MASTODON_KINDLE_HOME: /data
+      TZ: Europe/Berlin
+    volumes:
+      - /DATA/AppData/mastodon-kindle:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/state', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+
+x-casaos:
+  # Rueckwaerts geschriebener Bezeichner. Anpassen, wenn das Projekt eine
+  # eigene Domain oder ein GitHub-Repository bekommt.
+  id: com.mastodonkindle.app
+  main: mastodon-kindle
+  index: /
+  port_map: "8765"
+  scheme: http
+  icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/calibre-web.png
+  title:
+    en_US: Mastodon Kindle
+    de_DE: Mastodon Kindle
+  tagline:
+    en_US: Turn Mastodon threads into EPUBs and send them to your Kindle
+    de_DE: Mastodon-Threads als EPUB auf den Kindle schicken
+  description:
+    en_US: >-
+      Collects the threads of the accounts you choose, renders them as an EPUB
+      with embedded images and sends the book to your Kindle by e-mail.
+      Configuration, SMTP credentials and the finished books stay in
+      /DATA/AppData/mastodon-kindle and survive an update.
+    de_DE: >-
+      Sammelt die Threads ausgewaehlter Mastodon-Accounts, setzt sie als EPUB
+      mit eingebetteten Bildern und schickt das Buch per E-Mail auf den
+      Kindle. Konfiguration, SMTP-Zugang und die fertigen Buecher liegen in
+      /DATA/AppData/mastodon-kindle und ueberstehen ein Update.
+  author: mastodon-kindle
+  developer: mastodon-kindle
+  category: Social
+  architectures:
+    - amd64
+    - arm64
+  version: "0.2.0"
+  update_at: "2026-09-28"
+  release_notes:
+    en_US: First container release.
+    de_DE: Erste Container-Fassung.
+  tips:
+    before_install:
+      en_US: >-
+        The image mastodon-kindle:0.2.0 has to exist on the host before this
+        app can start. Build it first with "docker build -t
+        mastodon-kindle:0.2.0 ." in the project folder.
+      de_DE: >-
+        Das Image mastodon-kindle:0.2.0 muss auf dem Host schon vorhanden sein,
+        sonst startet die App nicht. Vorher im Projektordner "docker build -t
+        mastodon-kindle:0.2.0 ." ausfuehren.

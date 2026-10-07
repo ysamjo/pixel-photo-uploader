@@ -26,6 +26,10 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Konfiguration und Status liegen immer unter `state_root()` (`PPU_STATE_DIR`, standardmäßig `/data/state`).
 - `docker-compose.yml` ist die maßgebliche ZimaOS-App-Definition.
 - `docker-compose.local.yml` dient für lokale Entwicklung und Tests.
+- **`BEFUNDE-DE.md` ist das Sync-Nachschlagewerk**: Passreihenfolge, Resilio-Latenz
+  (gemessen, nicht gefühlt), Register-Belegung, Durchsatz. Vor jeder neuen Aussage
+  über Latenz, Blockierte oder Durchsatz dort nachlesen — und die Zahl neu messen,
+  wenn sie älter ist als ein Deploy.
 
 ## Commands
 
