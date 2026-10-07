@@ -1,9 +1,10 @@
 # Sync-Verhalten — Befunde, Regeln, offene Punkte
 
-Stand: 2026-10-07, 15:33 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
+Stand: 2026-10-07, 15:42 UTC. Server `pixel-photo-uploader:3.3.17` auf beiden
 Containern der ZimaOS (`192.168.178.162`), Companion **1.2.4** (versionCode 9) auf dem
 Upload-Pixel `FA69M0305152`. Die Zähler in §2, §6 und §8 sind an diesem Stand
-gemessen; die zwei Hochrechnungen in §8 sind dort als Rechnung gekennzeichnet.
+gemessen; die Monate-Aussage in §8 ist eine Hochrechnung **an der dort gemessenen**
+Upload-Rate und als solche gekennzeichnet.
 
 ## 1. Ein Durchlauf, und zwar in dieser Reihenfolge
 
@@ -44,7 +45,7 @@ paused"-Fälle. `blocked.csv` nach Reason gelesen: 290 ×
 „Empty file - nothing for Google Photos to back up", alle mit Größe 0 (253 davon
 `2010 Brasilien/Iguacu`, 30 `Location/Karlsruhe`). Die laufen nie wieder ein und
 blockieren nichts — Task 6 (transiente Zustände neu einordnen) hat aktuell **keine**
-Ledger-Opfer.
+Ledger-Opfer, aber seit 17:29:22 einen Betriebsfall: §6 und §9.
 
 ## 3. Der Rückbeleg hat drei Urteile, nicht zwei
 
@@ -124,9 +125,10 @@ selbst hat in Produktion noch nie gezündet — er ist durch Tests belegt
 (`tests/test_batches.py`, `tests/test_sync.py`) und meldet sich, sobald eine echte
 Freigabe dem Beleg zuvorkommt.
 
-Telefonseitig nach dem Recreate: **ein** Batch-Ordner `20261007-150538` mit 14
-Einträgen (12 Dateien + Manifest + Bereitschaftsmarker). Die 0,5-GiB-Doppelfüllung des
-ersten 3.3.16-Builds ist damit abgebaut.
+Telefonseitig nach dem Recreate lag **ein** Batch-Ordner `20261007-150538` mit 14
+Einträgen (12 Dateien + Manifest + Bereitschaftsmarker) — die 0,5-GiB-Doppelfüllung des
+ersten 3.3.16-Builds war damit abgebaut. Seit deinem Setup-Speichern um 15:19 UTC sind
+es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 
 ## 7. Die Telefon-Seite: Takt, Phasen, Lebenszeichen
 
@@ -160,10 +162,12 @@ ersten 3.3.16-Builds ist damit abgebaut.
   ~6.160 Batches.
 - Der Engpass verschiebt sich damit: Die zwei Absagerunden à 15 Minuten kosten pro
   Batch gleich viel Zeit, verteilen sich aber auf 20× mehr Bytes. Was bleibt, ist die
-  reine Sicherungszeit — und die ist bei 5 GiB **nicht gemessen**, der erste dieser
-  Läufe läuft gerade (Stand 15:33 UTC: Fotos zeigt „Backing up photos").
-  Als **Rechnung, nicht Messung**: mit ~35 min je Batch wären ~308 Batches
-  Größenordnung **eineinhalb Monate** Dauerbetrieb am Kabel.
+  reine Sicherungszeit — und die ist **gemessen**: drei Stichproben über den
+  `wlan0`-Sendezähler (17:34–17:42 CEST) geben **13,3 / 13,4 / 18,6 MiB/min**, also
+  **0,8–1,1 GiB je Stunde**. Ein 5-GiB-Batch braucht damit **~5–6 h** reine Uploadzeit,
+  der ganze Bestand **~1.400–1.900 h ≈ zwei bis zweieinhalb Monate** Dauerbetrieb am
+  Kabel. Zwei Grenzen der Zahl: `wlan0 tx` zählt *allen* Sendeverkehr des Telefons
+  (Obergrenze für den Anteil von Fotos), und die Absage-Runden sind da noch nicht drin.
 - **Zwei Dateien bleiben außerhalb jeder 5-GiB-Kappe** (13,98 GiB ≈ 0,9 % aller Bytes):
   `Altbestand/2018.06 Astrid & Tobias Hochzeit/Freie Trauung/2018-06 Hochzeit Astrid
   und Tobias (11).avi` mit **8,17 GiB** und
@@ -231,6 +235,8 @@ ersten 3.3.16-Builds ist damit abgebaut.
   Zugriff `getprop ro.product.model` (muss `Pixel` sagen).
 - Kein `uiautomator dump`, Screenshots nur nach `/data/local/tmp` — alles andere
   landet im MediaStore und wird von der App als neuer Ordner behandelt.
+- Fortschritt am Telefon über `awk '/wlan0/{print $10}' /proc/net/dev` — **Feld 10 ist
+  tx**, Feld 9 ist multicast. Ein Zwei-Punkte-Fenster (60–180 s) reicht; kürzer streut.
 - „Free up space" in Google Fotos **nie von Hand** bestätigen: das löscht
   Telefon-Medien. Dafür ist die App da, und die macht das nur nach ihrer Haken-Abfrage.
 - Fingerabdruck-Schlüssel überall: `NNNNNN-<fp12>.ext`, der Zwölfer-Teil ist die
