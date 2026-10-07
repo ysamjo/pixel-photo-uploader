@@ -174,7 +174,9 @@ ersten 3.3.16-Builds ist damit abgebaut.
   (17:33 CEST). Vorher: 10,69 GiB frei bei 0,25-GiB-Batches. Ein zweiter 5-GiB-Batch
   passt, bevor der erste abgerechnet ist, **nicht** — die Kapazitätskante
   `room = capacity - held_bytes` verhindert das auch, aber Resilio-Teilkopien zählen
-  dort nicht.
+  dort nicht. **Ein Puffer fehlt:** `ReserveGiB` (1,5) steht zwar in der Konfiguration,
+  wird aber nirgends gelesen — der Server kennt den freien Phonespeicher nicht und
+  kann nur über die Batch-Größe darauf Rücksicht nehmen.
 - Die **Log-Flut ist mit der Kappe fast weg**: statt ~30 Überspring-Warnungen je
   Durchlauf (34.682 seit dem Bestand) sind es jetzt genau **2** — die beiden Riesen
   oben. `grep -v "Single file larger"` ist damit nur noch für Alt-Protokolle nötig.
@@ -211,6 +213,12 @@ ersten 3.3.16-Builds ist damit abgebaut.
 
 - Zustand zuerst über `GET :8088/api/status` und `GET :8088/api/log?lines=N` — beide
   rein lesend, kein SSH nötig. `POST /api/sync` würde dagegen echt einen Pass anstossen.
+- **„Speichern" im Web-UI ist kein Teil-Update:** `apply_setup()` baut die Konfiguration
+  aus `DEFAULTS` nach (`setup.py:58`) und überschreibt nur die elf Formularfelder. Alles,
+  was nicht im Formular steht (`ReserveGiB`, `BackupPollSeconds`, `ScanGraceMinutes`,
+  `RemoteRoot`, `KeepAwake`, `RequireUnlocked`), liegt danach wieder auf dem Default —
+  und ein Feld, das im Browser noch offen ist, speichert den **alten** Wert. Nach jedem
+  Speichern `/api/status` gegenlesen.
 - Log-Zeitstempel: NAS **UTC**, Telefon-Protokoll **CEST**.
 - Im Log erst `grep -v "Single file larger than batch capacity"`, dann lesen.
 - In den Containern lesen ohne Shell-Chaos:
