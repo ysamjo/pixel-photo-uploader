@@ -91,6 +91,12 @@ public class BackupMonitorService extends Service {
 
         String phase = AppState.phase(this);
         MediaFolderScanner.Snapshot stable = scanner.scanStable(STABLE_MILLIS);
+        // Eine abgelehnte Datei, die nicht mehr liegt, ist vom Server abgerechnet: ihre Marke
+        // wird fallengelassen, sobald sie vom Gerät verschwunden ist. Der laufende Batch zählt
+        // mit — ein nur halb synchronisierter Batch-Ordner erscheint im Bestand noch nicht.
+        List<String> stillPresent = new ArrayList<>(stable.seen);
+        stillPresent.addAll(split(prefs.getString("batchPaths", "")));
+        AppState.forgetRefusedGone(this, stillPresent);
         prefs.edit().putInt("visibleFiles", stable.paths.size()).putLong("visibleBytes", stable.bytes).apply();
 
         if (!prefs.getString("pendingReceiptPaths", "").trim().isEmpty()) {
@@ -136,17 +142,25 @@ public class BackupMonitorService extends Service {
             return;
         }
 
-        scanner.mediaScan(stable.paths);
+        List<String> offerable = AppState.withoutRefused(this, stable.paths);
+        if (offerable.isEmpty()) {
+            update("Nur abgelehnte Dateien liegen noch – warte auf den Server");
+            return;
+        }
+        long offerBytes = 0;
+        for (String path : offerable) offerBytes += new File(path).length();
+
+        scanner.mediaScan(offerable);
         prefs.edit()
-                .putString("batchPaths", join(stable.paths))
-                .putLong("batchBytes", stable.bytes)
+                .putString("batchPaths", join(offerable))
+                .putLong("batchBytes", offerBytes)
                 .putLong("batchStartedAt", System.currentTimeMillis())
                 .putBoolean("sawActiveBackup", false)
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
                 .apply();
         AppState.phase(this, AppState.PHASE_WAIT_BACKUP,
-                String.format(Locale.GERMANY, "%d stabile Dateien an Google Fotos übergeben.", stable.paths.size()));
+                String.format(Locale.GERMANY, "%d stabile Dateien an Google Fotos übergeben.", offerable.size()));
         openGooglePhotos();
         update("Google Fotos sichert den aktuellen Batch");
     }
@@ -158,6 +172,9 @@ public class BackupMonitorService extends Service {
         int remaining = 0;
         List<String> removedPaths = new ArrayList<>();
         for (String path : before) {
+            // Eine abgelehnte Datei, die jetzt fehlt, hat der Server freigegeben — nicht
+            // Google Fotos. Sie wäre ein Doppelbeleg auf ein bereits gefälltes Urteil.
+            if (AppState.isRefused(this, path)) continue;
             if (new File(path).exists()) remaining++;
             else { removed++; removedPaths.add(path); }
         }
@@ -192,6 +209,10 @@ public class BackupMonitorService extends Service {
         List<String> gone = new ArrayList<>();
         int remaining = 0;
         for (String path : paths) {
+            // Verschwindet eine abgelehnte Datei, war das die eigene Handreichungsfreigabe des
+            // Servers über Resilio — keine Google-Freigabe. Sie darf nie als Erfolg verbucht
+            // werden; das Urteil darüber ist schon als Absage übergeben.
+            if (AppState.isRefused(this, path)) continue;
             if (new File(path).exists()) remaining++;
             else gone.add(path);
         }
@@ -224,6 +245,11 @@ public class BackupMonitorService extends Service {
         try {
             File receipt = ReceiptWriter.write(this, new ArrayList<String>(), refused,
                     refused.size());
+            // Die Marke entsteht hier: Von jetzt an bietet die Automatik keine dieser Dateien
+            // noch einmal an und verbucht ihre Löschung nicht als Google-Freigabe — die
+            // Handreichung gibt nämlich der Server selbst frei, und Resilio löscht sie vom
+            // Gerät, ohne dass Google Fotos je etwas damit getan hätte.
+            AppState.rememberRefused(this, refused);
             prefs.edit()
                     .putString("lastReceipt", receipt.getAbsolutePath())
                     .putString("batchPaths", "")

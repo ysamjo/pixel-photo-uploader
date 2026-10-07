@@ -12,18 +12,28 @@ from pathlib import Path
 
 from . import APP_BATCH_FOLDER
 from . import catalog_path as default_catalog_path
+from . import completed_path as default_completed_path
 from . import staged_path as default_staged_path
 from . import blocked_path as default_blocked_path
 from .fingerprints import file_sha256
 from .store import (
     add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
-    load_catalog, load_completion_sets, load_staged, save_catalog, save_staged,
-    _parse_iso,
+    load_blocked, load_catalog, load_completion_sets, load_staged, save_blocked,
+    save_catalog, save_staged, _parse_iso,
 )
 from .util import batch_capacity_bytes, clamp, write_log
 from . import MAX_BATCH_GIB, MIN_BATCH_GIB
 from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
                MIN_BACKUP_TIMEOUT_HOURS)
+
+# Google Fotos hat den Inhalt schon: Nach zweimal bestätigter Sicherung meldet das
+# Telefon „Nichts freizugeben", und die Datei liegt weiter im Handreichungsordner.
+# Für eine Bibliothek, die aus mehreren Geräten gefüttert wird, ist das kein
+# Problemfall — es ist dieselbe Auskunft wie ein Freigabe-Beleg, nur von einem
+# anderen Gerät gebucht. blocked.csv wäre die falsche Kladde: sie zählt sie als
+# Misserfolg, und die 3.3.15 hat genau das getan.
+ALREADY_SECURED_REASON = "Google Photos already holds this content (nothing to free up)"
+REFUSAL_REASONS = ("Google Photos refused to free the file",)
 
 
 def batch_dir(staging_root: Path, batch_id: str) -> Path:
@@ -213,13 +223,18 @@ def backup_timeout_hours(cfg: dict) -> float:
 
 
 def _release_staged(cfg: dict, staged: list[dict], released: list[dict],
-                    reason: str, staged_file: Path, blocked_file: Path) -> int:
-    """Let go of staged entries: block them, and shrink every batch around the rest.
+                    reason: str, staged_file: Path, blocked_file: Path | None = None,
+                    record=None) -> int:
+    """Let go of staged entries: book them, and shrink every batch around the rest.
 
     Only the handover copy goes; the archive keeps its copy and Resilio removes
-    the Pixel copy.
+    the Pixel copy. The ledger is written before the handover file is unlinked:
+    a deletion the sync service sees first reads as a free-up by Google Photos.
     """
-    append_blocked(released, reason, blocked_file)
+    if record is None:
+        append_blocked(released, reason, blocked_file)
+    else:
+        record(released)
     keep = [e for e in staged if e not in released]
     save_staged(keep, staged_file)
 
@@ -269,17 +284,17 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
     return count
 
 
-def release_refused(cfg: dict, staged_file: Path | None = None,
-                    blocked_file: Path | None = None) -> int:
-    """Release handover files the Pixel reports back as never freeable.
+def settle_refused(cfg: dict, staged_file: Path | None = None) -> int:
+    """Book the files the Pixel reports back as never freeable.
 
-    The companion app gives up after its own "Nothing to free up" rounds and
-    says so in a receipt instead of waiting out BackupTimeoutHours: without
-    this the rejected files would keep staged.json non-empty and hold the whole
-    queue for days.
+    The companion app gives up after its own "Nothing to free up" rounds and says
+    so in a receipt. Those files are not failures: Google Photos holds the content
+    already, so it has nothing to free on this phone. They leave the queue as
+    secured, which keeps them out of the next batch without hiding them in
+    blocked.csv — and the handover lets go of them right away instead of holding
+    the whole queue through the backup timeout.
     """
     staged_file = staged_file or default_staged_path()
-    blocked_file = blocked_file or default_blocked_path()
     staged = load_staged(staged_file)
     if not staged:
         return 0
@@ -290,12 +305,41 @@ def release_refused(cfg: dict, staged_file: Path | None = None,
                if str(e.get("PixelSuffix", "")).lower() in hits]
     if not refused:
         return 0
-    count = _release_staged(cfg, staged, refused,
-                            "Google Photos refused to free the file",
-                            staged_file, blocked_file)
-    write_log(f"{count} files were refused by Google Photos and are now blocked; "
-              f"their handover copies were released.", "WARN")
+    fps, hashes = load_completion_sets()
+
+    def record(entries: list[dict]) -> None:
+        for entry in entries:
+            add_completion(entry, fps, hashes, ALREADY_SECURED_REASON)
+
+    count = _release_staged(cfg, staged, refused, ALREADY_SECURED_REASON,
+                            staged_file, record=record)
+    write_log(f"{count} files are already in Google Photos; booked as secured and "
+              f"their handover copies released.", "OK")
     return count
+
+
+def migrate_refusal_blocks(blocked_file: Path | None = None,
+                           completed_file: Path | None = None) -> int:
+    """Re-book the refusals that the 3.3.15 filed as blocked.
+
+    Until then a refusal was indistinguishable from a timeout in the ledger, and
+    both landed in blocked.csv. The refusal rows are successes of a different
+    provenance; the timeout rows keep their problem-case place.
+    """
+    blocked_file = blocked_file or default_blocked_path()
+    completed_file = completed_file or default_completed_path()
+    rows = load_blocked(blocked_file)
+    moved = [r for r in rows if str(r.get("Reason", "")) in REFUSAL_REASONS]
+    if not moved:
+        return 0
+    fps, hashes = load_completion_sets(completed_file)
+    for entry in moved:
+        add_completion(entry, fps, hashes, ALREADY_SECURED_REASON, completed_file)
+    save_blocked([r for r in rows if str(r.get("Reason", "")) not in REFUSAL_REASONS],
+                 blocked_file)
+    write_log(f"{len(moved)} refused files from the blocked ledger are now booked as "
+              f"secured: Google Photos already holds their content.", "OK")
+    return len(moved)
 
 
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
@@ -334,13 +378,21 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
                             staged_file: Path | None = None) -> int:
     catalog = load_catalog(catalog_file)
     staged = load_staged(staged_file)
-    if staged:
-        write_log("Running batch still waits for its Android receipt; no new batch staged.")
+    capacity = batch_capacity_bytes(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
+    # File-level, not batch-level: a receipt settles file by file, so a handful of
+    # files still waiting must not stop the next batch. What stays is the phone's own
+    # space: every unsettled handover copy lies on the device at once, however many
+    # batch folders it is spread over - so the open ones together may never exceed
+    # one batch capacity.
+    held_bytes = sum(int(str(e.get("Size", "0")) or 0) for e in staged)
+    room = capacity - held_bytes
+    if room <= 0:
+        write_log(f"{len(staged)} files already hold the whole "
+                  f"{capacity / 1024**3:.2f} GiB handover capacity; nothing new staged.")
         return 0
     staged_fps = {str(e.get("Fingerprint", "")).lower() for e in staged}
     fps, hashes = load_completion_sets()
     blocked = blocked_fingerprints()
-    capacity = batch_capacity_bytes(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
     archive = Path(str(cfg["SourceRoot"]))
     selected: list[dict] = []
     selected_bytes = 0
@@ -364,7 +416,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
         if size > capacity:
             write_log(f"Single file larger than batch capacity, skipped: {entry.get('RelativePath')}", "WARN")
             continue
-        if selected_bytes + size > capacity:
+        if selected_bytes + size > room:
             continue
         src = archive / rel
         if not src.is_file():

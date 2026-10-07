@@ -240,11 +240,12 @@ public class MainActivity extends Activity {
         int visible = prefs.getInt("visibleFiles", 0);
         long bytes = prefs.getLong("visibleBytes", 0L);
         int completed = prefs.getInt("completedTotal", 0);
+        int refused = AppState.refusedTokens(this).size();
         long updated = prefs.getLong("updatedAt", 0L);
         String updatedText = updated == 0 ? "noch nie" : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(new Date(updated));
         counters.setText(String.format(Locale.GERMANY,
-                "Stabile Dateien in überwachten Ordnern: %,d\nGröße: %.2f GiB\nSeit Installation lokal freigegeben: %,d\nLetzte Aktualisierung: %s",
-                visible, bytes / 1073741824.0, completed, updatedText));
+                "Stabile Dateien in überwachten Ordnern: %,d\nGröße: %.2f GiB\nSeit Installation lokal freigegeben: %,d\nAbgelehnt und an den Server übergeben: %,d\nLetzte Aktualisierung: %s",
+                visible, bytes / 1073741824.0, completed, refused, updatedText));
         log.setText(AppState.readLogTail(this, 80));
         start.setEnabled(!enabled || !running);
         pause.setEnabled(enabled || running);

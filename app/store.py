@@ -120,6 +120,17 @@ def load_blocked(path: Path | None = None) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+def save_blocked(entries: list[dict], path: Path | None = None) -> None:
+    p = path or blocked_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=BLOCKED_FIELDS)
+        w.writeheader()
+        w.writerows(entries)
+    tmp.replace(p)
+
+
 def blocked_fingerprints(path: Path | None = None) -> set[str]:
     return {str(row.get("Fingerprint", "")).lower() for row in load_blocked(path)
             if str(row.get("Fingerprint", "")).strip()}
@@ -150,13 +161,7 @@ def append_blocked(entries: list[dict], reason: str, path: Path | None = None) -
         added += 1
     if not added:
         return 0
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=BLOCKED_FIELDS)
-        w.writeheader()
-        w.writerows(rows)
-    tmp.replace(p)
+    save_blocked(rows, p)
     return added
 
 

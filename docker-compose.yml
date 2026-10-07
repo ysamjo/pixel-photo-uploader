@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.15
+    image: pixel-photo-uploader:3.3.16
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -42,7 +42,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.15
+    image: pixel-photo-uploader:3.3.16
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -82,11 +82,11 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.15"
-  update_at: "2026-10-06"
+  version: "3.3.16"
+  update_at: "2026-10-07"
   release_notes:
-    en_US: ZimaOS packaging; cross-filesystem import fix; linear dedup and receipt speedups; Android refusal receipts release rejected files instead of blocking the queue.
-    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung; Absage-Rückbelege geben abgelehnte Dateien sofort frei.
+    en_US: ZimaOS packaging; cross-filesystem import fix; linear dedup and receipt speedups; a phone that refuses to free a file now settles it as already secured, and a new batch stages while an earlier handover is still open.
+    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung; eine Absage des Telefons gilt als bereits gesichert statt als Blockade, und ein neuer Batch läuft, solange eine Handreichung noch offen ist.
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues

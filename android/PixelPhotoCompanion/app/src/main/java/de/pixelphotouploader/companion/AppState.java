@@ -10,8 +10,10 @@ import java.io.FileWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 final class AppState {
     static final String PREFS = "pixel_photo_companion";
@@ -46,6 +48,76 @@ final class AppState {
                 .remove("stuckSince")
                 .apply();
         log(context, detail);
+    }
+
+    // Absage-Marken: Sagt Google Fotos „Nichts freizugeben“, darf die Automatik dieselben
+    // Dateien weder noch einmal anbieseln noch ihre spätere Löschung als Google-Freigabe
+    // verbuchen — nach dem Urteil gibt der Server die Handreichung selbst frei, und Resilio
+    // löscht die Kopie vom Gerät, ohne dass Google Fotos etwas damit getan hätte.
+    // Gemerkt wird der Zwölfer-Fingerabdruck aus dem Handreichungsnamen
+    // (000042-1a2b3c4d5e6f.jpg): der bleibt über jedes Neueinreihen gleich, laufende
+    // Nummer und Batch-Ordner wechseln dabei.
+    private static final String REFUSED_TOKENS = "refusedTokens";
+
+    static String contentToken(String path) {
+        String name = new File(path).getName().toLowerCase(Locale.ROOT);
+        if (name.length() >= 19 && name.charAt(6) == '-') {
+            boolean numbered = true;
+            for (int i = 0; i < 6; i++) if (!Character.isDigit(name.charAt(i))) numbered = false;
+            boolean fingerprinted = true;
+            for (int i = 7; i < 19; i++) if (Character.digit(name.charAt(i), 16) < 0) fingerprinted = false;
+            if (numbered && fingerprinted) return name.substring(7, 19);
+        }
+        // ADB-Übergabe und Fremdnamen haben kein Muster; ihr Dateiname ist das beste Merkmal.
+        return name;
+    }
+
+    static Set<String> refusedTokens(Context context) {
+        Set<String> out = new HashSet<>();
+        for (String line : prefs(context).getString(REFUSED_TOKENS, "").split("\\n")) {
+            String value = line.trim();
+            if (!value.isEmpty()) out.add(value);
+        }
+        return out;
+    }
+
+    static boolean isRefused(Context context, String path) {
+        return refusedTokens(context).contains(contentToken(path));
+    }
+
+    static void rememberRefused(Context context, List<String> paths) {
+        Set<String> tokens = refusedTokens(context);
+        for (String path : paths) tokens.add(contentToken(path));
+        prefs(context).edit().putString(REFUSED_TOKENS, join(new ArrayList<>(tokens))).apply();
+    }
+
+    static List<String> withoutRefused(Context context, List<String> paths) {
+        Set<String> refused = refusedTokens(context);
+        List<String> out = new ArrayList<>();
+        for (String path : paths) if (!refused.contains(contentToken(path))) out.add(path);
+        return out;
+    }
+
+    // Eine Marke ist nur so lange nötig, wie die abgelehnte Datei noch liegt. Ist sie vom
+    // Gerät verschwunden, hat der Server ihr Urteil schon abgerechnet — ab hier wäre ein
+    // späterer Wiedervorlauf ausgeschlossen, ohne Grund.
+    static void forgetRefusedGone(Context context, List<String> presentPaths) {
+        Set<String> refused = refusedTokens(context);
+        if (refused.isEmpty()) return;
+        Set<String> present = new HashSet<>();
+        for (String path : presentPaths) present.add(contentToken(path));
+        Set<String> kept = new HashSet<>();
+        for (String token : refused) if (present.contains(token)) kept.add(token);
+        if (kept.size() == refused.size()) return;
+        StringBuilder out = new StringBuilder();
+        for (String token : kept) { if (out.length() > 0) out.append('\n'); out.append(token); }
+        prefs(context).edit().putString(REFUSED_TOKENS, out.toString()).apply();
+    }
+
+    private static String join(List<String> values) {
+        StringBuilder out = new StringBuilder();
+        for (String value : values) { if (out.length() > 0) out.append('\n'); out.append(value); }
+        return out.toString();
     }
 
     static List<String> folderPaths(Context context) {

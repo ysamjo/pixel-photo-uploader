@@ -33,9 +33,11 @@ public class PhotosAccessibilityService extends AccessibilityService {
     // So oft darf Google Fotos „Nichts freizugeben“ melden, während noch Batchdateien auf dem
     // Gerät liegen. Getrennt von freeUpRound gezählt: „nichts freizugeben“ ist kein Klickproblem,
     // das ein weiterer Versuch löst, sondern Fotos' eigene Aussage, dass es diese Dateien nicht
-    // anfassen will. Ohne Zähler lief der Versuch alle 15 Minuten bis zum 72-Stunden-Limit durch —
-    // still, ohne dass ein Mensch je davon erfahren hätte.
-    private static final int NOTHING_TO_FREE_ROUNDS = 6;
+    // anfassen will. Zwei Runden reichen: die Aussage ist eindeutig, und was nach 30 Minuten
+    // nicht freizugeben ist, ist es nach 90 Minuten auch nicht. Die Absage ist ein Urteil —
+    // der Server rechnet sie als „bereits gesichert“ ab, statt die Queue bis zum
+    // BackupTimeoutHours offen zu halten.
+    private static final int NOTHING_TO_FREE_ROUNDS = 2;
     // Wörter, die eine laufende Sicherung beweisen. Sie heavier als die Fehlerwörter unten:
     // Promo- und Onboarding-Karten von Google Fotos enthalten Sätze wie „Backup is off“,
     // während die Sicherung in Wahrheit durchläuft.
@@ -573,8 +575,12 @@ public class PhotosAccessibilityService extends AccessibilityService {
         }
         MediaFolderScanner scanner = new MediaFolderScanner(this);
         MediaFolderScanner.Snapshot current = MediaFolderScanner.scanAllCached(this);
+        // Abgelehnte Dateien bleiben auch bei einer Nachlieferung außen vor: sonst legte
+        // dieselbe Datei Google Fotos noch einmal vor, während ihr Urteil schon beim Server liegt.
         List<String> added = new ArrayList<>();
-        for (String path : current.paths) if (!known.contains(path)) added.add(path);
+        for (String path : AppState.withoutRefused(this, current.paths)) {
+            if (!known.contains(path)) added.add(path);
+        }
         if (added.isEmpty()) return true;
 
         known.addAll(added);

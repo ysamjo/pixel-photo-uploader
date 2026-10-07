@@ -1,4 +1,5 @@
 """Batch handover + receipt confirm incl. v3.3.9 partial-confirm shrink."""
+import csv
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -271,24 +272,88 @@ def _refusal_receipt(cfg: dict, entries: list[dict]) -> None:
     }), encoding="utf-8")
 
 
-def test_absage_rueckbeleg_gehoert_nicht_zum_erfolg(tmp_path, monkeypatch):
+def test_absage_ist_drittes_urteil_bereits_gesichert(tmp_path, monkeypatch):
+    """„Nichts freizugeben“ nach bestätigter Sicherung heisst: Fotos besitzt den
+    Inhalt schon. Das ist ein Erfolg mit anderer Herkunft, kein Problemfall."""
     cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     before = {e["Fingerprint"]: e for e in staged}
     _refusal_receipt(cfg, staged[:1])
 
-    assert batches.release_refused(cfg, staged_file, blocked_file) == 1
+    assert batches.settle_refused(cfg, staged_file) == 1
 
     rest = store.load_staged(staged_file)
     assert [e["RelativePath"] for e in rest] == ["b.jpg"]
-    rows = store.load_blocked(blocked_file)
+    assert not blocked_file.exists()
+    rows = list(csv.DictReader(open(tmp_path / "state" / "completed.csv", newline="",
+                                    encoding="utf-8")))
     assert [r["RelativePath"] for r in rows] == ["a.jpg"]
-    assert rows[0]["Reason"] == "Google Photos refused to free the file"
-    assert store.load_completion_sets(tmp_path / "state" / "completed.csv")[0] == set()
+    assert rows[0]["Reason"] == batches.ALREADY_SECURED_REASON
     d = batches.batch_dir(Path(cfg["StagingRoot"]), rest[0]["BatchId"])
     assert (d / before["fp-a.jpg"]["StagedName"]).is_file() is False
     manifest = json.loads((d / "_batch-manifest.json").read_text(encoding="utf-8"))
     assert manifest["fileCount"] == 1
+
+
+def test_alte_absagen_wandern_in_die_erfolgsledger(tmp_path, monkeypatch):
+    """Die 3.3.15 hat Absagen nach blocked.csv gelegt; dieselben Dateien sind jetzt
+    als gesichert verbucht. Zeitüberschreitungen bleiben Problemfälle."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    blocked_file = tmp_path / "state" / "blocked.csv"
+    completed_file = tmp_path / "state" / "completed.csv"
+    entries = [{"Fingerprint": f"fp-{i}", "Sha256": "", "RelativePath": f"{i}.jpg",
+                "Size": "100", "BatchId": "b1", "StagedUtc": ""} for i in (1, 2, 3)]
+    store.append_blocked(entries[:2], "Google Photos refused to free the file", blocked_file)
+    store.append_blocked(entries[2:], "No receipt within 72 h", blocked_file)
+
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 2
+    assert [r["Fingerprint"] for r in store.load_blocked(blocked_file)] == ["fp-3"]
+    moved = list(csv.DictReader(open(completed_file, newline="", encoding="utf-8")))
+    assert [r["Fingerprint"] for r in moved] == ["fp-1", "fp-2"]
+    assert moved[0]["Reason"] == batches.ALREADY_SECURED_REASON
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 0
+
+
+def test_wartende_dateien_belegen_hoechstens_eine_kappe(tmp_path, monkeypatch):
+    """Datei-Level statt Batch-Level: eine Handvoll haengender Dateien gibt die
+    Queue frei, erst die ausgeschöpfte Phonespeicher-Kappe hält sie auf."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    cfg["BatchGiB"] = 0.25
+    capacity = int(0.25 * 1024**3)
+    (Path(cfg["SourceRoot"]) / "new.jpg").write_bytes(os_bytes("new.jpg"))
+    store.save_catalog([{
+        "Fingerprint": "fp-new", "RelativePath": "new.jpg",
+        "Size": str(len(os_bytes("new.jpg"))),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    }], catalog_file)
+
+    def hold(size: int) -> None:
+        store.save_staged([{
+            "Fingerprint": "fp-old", "Sha256": "", "RelativePath": "old.jpg",
+            "Size": str(size), "BatchId": "old", "StagedName": "000001-fp-old.jpg",
+            "PixelSuffix": "/Batches/old/000001-fp-old.jpg", "State": "Staged",
+            "StagedUtc": "2026-01-01T00:00:00+00:00",
+        }], staged_file)
+
+    hold(capacity + 1)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+    assert store.load_staged(staged_file)
+
+    hold(capacity // 4)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+    assert [e["RelativePath"] for e in store.load_staged(staged_file)] == ["old.jpg", "new.jpg"]
+
+    # Aufgefuellt wird nur bis zur Kapazitaetskante, nicht eine ganze Batchgroesse
+    # obendrauf: das Telefon haelt alle offentlichen Handreichungen gleichzeitig.
+    hold(capacity - 1_000)
+    for name in ("p1.jpg", "p2.jpg"):
+        (Path(cfg["SourceRoot"]) / name).write_bytes(b"x" * 1_000)
+    store.save_catalog(store.load_catalog(catalog_file) + [
+        {"Fingerprint": f"fp-{n}", "RelativePath": n, "Size": "1000",
+         "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": ""}
+        for n in ("p1.jpg", "p2.jpg")], catalog_file)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+    assert sum(int(e["Size"]) for e in store.load_staged(staged_file)) <= capacity
 
 
 def test_absage_haelt_keinen_neuen_batch_auf(tmp_path, monkeypatch):
@@ -296,7 +361,7 @@ def test_absage_haelt_keinen_neuen_batch_auf(tmp_path, monkeypatch):
     batch_id = store.load_staged(staged_file)[0]["BatchId"]
     _refusal_receipt(cfg, store.load_staged(staged_file))
 
-    assert batches.release_refused(cfg, staged_file, blocked_file) == 2
+    assert batches.settle_refused(cfg, staged_file) == 2
     assert store.load_staged(staged_file) == []
     assert not batches.batch_dir(Path(cfg["StagingRoot"]), batch_id).exists()
 
@@ -317,6 +382,6 @@ def test_loesch_rueckbeleg_ist_keine_absage(tmp_path, monkeypatch):
     (Path(cfg["ControlRoot"]) / "receipt-1.json").write_text(json.dumps({
         "version": 1, "removedPaths": [staged[0]["PixelSuffix"]]}), encoding="utf-8")
 
-    assert batches.release_refused(cfg, staged_file, blocked_file) == 0
+    assert batches.settle_refused(cfg, staged_file) == 0
     assert len(store.load_staged(staged_file)) == 2
     assert not blocked_file.exists()

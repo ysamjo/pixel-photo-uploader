@@ -26,8 +26,16 @@ final class MediaFolderScanner {
 
     static final class Snapshot {
         final List<String> paths;
+        // Alle gesehenen Medien, auch die noch unstabilen: die Absage-Marken werden daran
+        // vergessen, nicht am Stabilesbestand — sonst fiele eine gerade nachsyncete,
+        // abgelehnte Datei aus der Marke, obwohl sie noch liegt.
+        final List<String> seen;
         final long bytes;
-        Snapshot(List<String> paths, long bytes) { this.paths = paths; this.bytes = bytes; }
+        Snapshot(List<String> paths, List<String> seen, long bytes) {
+            this.paths = paths;
+            this.seen = seen;
+            this.bytes = bytes;
+        }
     }
 
     private final Context context;
@@ -70,7 +78,8 @@ final class MediaFolderScanner {
         previous.clear();
         previous.putAll(current);
         Collections.sort(stable);
-        return new Snapshot(stable, bytes);
+        Collections.sort(all);
+        return new Snapshot(stable, all, bytes);
     }
 
     Snapshot scanAll() {
@@ -80,7 +89,7 @@ final class MediaFolderScanner {
         long bytes = 0;
         for (FileStamp stamp : current.values()) bytes += stamp.size;
         Collections.sort(all);
-        return new Snapshot(all, bytes);
+        return new Snapshot(all, all, bytes);
     }
 
     static synchronized Snapshot scanAllCached(Context context) {

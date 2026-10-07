@@ -42,13 +42,20 @@ Regeln, kurz:
    entfernt, gleicher Name mit anderem Inhalt bekommt ` (1)`, ` (2)` …
 4. **Screenshots und Memes** bleiben im Eingang (`Screenshots/`, `Memes/`) und
    gehen nie ans Pixel.
-5. **Ein Batch, ein Rückbeleg.** Der nächste Batch beginnt erst, wenn das Pixel
-   den aktuellen per `receipt-*.json` bestätigt hat.
+5. **Datei für Datei abgerechnet.** Jede Datei rechnet sich mit ihrem eigenen
+   Rückbeleg ab; eine offene Handreichung hält den nächsten Batch nicht auf. Das
+   Telefon hält dabei nie mehr als eine Batchgröße — die Kapazität teilt sich auf
+   alle offenen Batches auf.
 6. **Nichts wartet endlos.** Bleibt eine Datei länger als `BackupTimeoutHours`
    (Standard 72 h) ohne Rückbeleg, wandert sie nach `state/blocked.csv` und die
    Handreichung wird freigegeben — das Archiv behält seine Kopie. Blockierte
    Fingerabdrücke werden nie wieder vorgemerkt; zum erneuten Versuch die Zeile
    in `blocked.csv` löschen.
+7. **Eine Absage ist ein Urteil.** Verweigert Google Fotos die Freigabe zweimal
+   („Nichts freizugeben"), hält es den Inhalt schon — meist von einem anderen
+   Gerät. `settle_refused()` bucht die Datei als *bereits gesichert* nach
+   `completed.csv`, nicht nach `blocked.csv`, und gibt die Handreichung sofort
+   frei.
 
 ## Pfade: Host (ZimaOS) → Container → Zweck
 
@@ -183,6 +190,15 @@ Resilio-Freigabe gelegt.
   zu schweigen. Der Uploader legt diese Dateien sofort in `blocked.csv` und gibt
   die Handreichung frei (`release_refused`); vorher hielt ein abgelehnter Rest die
   ganze Queue bis `BackupTimeoutHours` auf. Archiv-Kopien bleiben erhalten.
+- **Drittes Urteil „bereits gesichert" (3.3.16):** Die Absage ist kein Fehlerfall.
+  Google Fotos lehnt eine Datei ab, weil es den Inhalt schon hält — also bucht
+  `settle_refused()` sie in `completed.csv` (Merker: „Google Photos already holds
+  this content") statt in `blocked.csv`; `migrate_refusal_blocks()` räumt die
+  Absagen um, die 3.3.15 dorthin legte. Die App braucht nur noch zwei Runden
+  statt sechs, und eine offene Handreichung hält die Queue nicht mehr auf:
+  `select_and_stage_batch()` reiht neue Dateien nach, solange die Wartenden nicht
+  mehr als die Batch-Kapazität belegen. Das Ledger schreibt vor der Löschung —
+  sonst läse die App die eigene Handreichungsfreigabe als Google-Erfolg.
 - Windows-PS1 ist eingefroren bei 3.3.12 (siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/`).
 
 Release-Ablauf: Tag `v3.3.13` pushen → `.github/workflows/publish.yml` baut

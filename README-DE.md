@@ -29,8 +29,9 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 2. **Das Archiv ist die Bibliothek:** Daraus wird ausschließlich kopiert.
 3. **Duplikate entscheidet SHA-256:** Nicht der Dateiname.
 4. **Screenshots & Memes:** Bleiben im Eingang und gehen nie ans Pixel.
-5. **Ein Batch, ein Rückbeleg:** Der nächste Batch startet erst, wenn das Pixel den aktuellen bestätigt hat.
+5. **Datei für Datei abgerechnet:** Eine offene Handreichung hält die Queue nicht auf – der nächste Batch läuft mit, das Telefon hält dabei nie mehr als eine Batchgröße.
 6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 72 h) keinen Rückbeleg hat, wandert in `blocked.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; blockierte Fingerabdrücke laufen nie wieder ein.
+7. **Eine Absage ist ein Urteil, kein Fehler:** Sagt Google Fotos zweimal „Nichts freizugeben", hält es den Inhalt schon (meist von einem anderen Gerät). Die Datei kommt als *bereits gesichert* in `completed.csv`, nicht in `blocked.csv`, und die Queue läuft sofort weiter.
 
 ## Paketinhalt
 
@@ -62,17 +63,17 @@ tests/                     71 Tests (pytest, kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.15 .
+docker build -t pixel-photo-uploader:3.3.16 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.15 | gzip > pixel-photo-uploader-3.3.15.tar.gz
-scp pixel-photo-uploader-3.3.15.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.16 | gzip > pixel-photo-uploader-3.3.16.tar.gz
+scp pixel-photo-uploader-3.3.16.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.15.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.16.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren
