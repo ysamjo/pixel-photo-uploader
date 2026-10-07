@@ -108,9 +108,9 @@ genau für diese Lücke da.
 | 14:36 | 16:36:01 | **1.2.4 installiert** — Protokoll: „Bedienungshilfe verbunden." + „Überwachung lief nicht – wird neu gestartet.", danach normaler 30-s-Takt. |
 | 15:05 | 17:05:07 | 41 Dateien: Absage-Beleg → **completed 392 → 433**, staged 41 → 0, Batch-Ordner weg, neuer Batch `20261007-150538` mit 12 Dateien. |
 | 15:13 | 17:13:10 | Telefon: „Sicherung abgeschlossen (Prüfung 1/2)" für die neuen 12. |
-| 15:21 | 17:21 | Latenz-Messung über die Erhöhung hinweg: Marker in `control/` geschrieben, nach **135 s** auf dem Pixel sichtbar (Poll alle 5 s, beidseitig wieder gelöscht). |
 | 15:18:58 | 17:18:58 | **„Setup saved"** im Log: `BatchGiB` 0,25 → **5,0**. Von dir im Web-UI gesetzt — kein POST von mir (im Protokoll liegt nur der Setup-POST vom 06.10. 10:02 UTC, und der war vor deiner 0,25-Einstellung). |
 | 15:19:43 | | `select_and_stage_batch()` füllt die neue Kapazität sofort: **597 Dateien / 4,75 GiB**, Batch `20261007-151943`, um 15:20:34 in der Übergabe fertig. |
+| 15:21 | 17:21 | Latenz-Messung über die Erhöhung hinweg: Marker in `control/` geschrieben, nach **135 s** auf dem Pixel sichtbar (Poll alle 5 s, beidseitig wieder gelöscht). |
 | ~15:28 | 17:28 | Beide Batches sind auf dem Pixel: `staging/Batches/20261007-150538` 256 MB, `…/20261007-151943` **4,7 GB** (`du`). Freier Phonespeicher damit **8,2 GiB** von 24 G (`df /data`, 66 % voll) — vorher 10,69 GiB. |
 | 15:29:16 | 17:29:16 | App übergibt **609 stabile Dateien** auf einmal an Fotos (beide Batches in einem Angebot; die 12 aus der Absage-Runde 1/2 sind dabei). |
 | 15:29:22 | 17:29:22 | **Fehlalarm:** App liest „backup paused" aus dem Bildschirm und geht in `PHASE_ERROR` — „Es wurde nichts freigegeben". |
