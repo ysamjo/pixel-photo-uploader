@@ -1,4 +1,4 @@
-# Pixel Photo Companion 1.2.0
+# Pixel Photo Companion 1.2.4
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
 
@@ -21,7 +21,7 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - hält eine Absage auseinander: meldet Google Fotos zweimal „Nichts freizugeben“, übergibt die Liste als Absage-Rückbeleg, bietet dieselben Inhalte nicht erneut an und verbucht ihre spätere Löschung nicht als Google-Freigabe — die gibt nämlich der Server selbst über Resilio frei;
 - schreibt einen atomaren JSON-Rückbeleg in den Resilio-Kontrollordner, auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist;
 - spiegelt ihr Protokoll zusätzlich nach `<Kontrollordner>/companion-log.txt`, damit der Server im Web-UI unter „Pixel meldet" zeigt, worauf die Automatik wartet — ohne Kabel;
-- läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war.
+- läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war; auch nach einem App-Update weckt die Bedienungshilfe die Überwachung selbst.
 
 ## Wichtige Sicherheitsgrenze
 
@@ -91,6 +91,22 @@ Nach einem Neustart muss das Pixel einmal manuell entsperrt werden. Die App spei
 - **Prüft Freigabebestätigung:** Klickt nur einen eindeutig erkannten lokalen Freigabedialog.
 - **Prüft entfernte Dateien:** Vergleicht die vorher gespeicherten Pfade mit dem Bestand danach.
 - **Fehler:** Automatik ist angehalten; es wird nichts freigegeben. Nach **Zurücksetzen** in der App läuft sie weiter.
+
+## Änderungen in 1.2.4
+
+- **Die Überwachung steht nach einem App-Update wieder auf.** `adb install -r` beendet
+  die App per Force-Stop, und der automatische Neustart des Vordergrunddienstes
+  überlebt das nicht: der Dienst bleibt ohne Prozess gemeldet, der 30-Sekunden-Tick
+  läuft nie wieder an. Die App zeigte dann nur „Pausiert", auf dem Server fiel nichts
+  auf und die Queue stand still. Die Bedienungshilfe ist an das System gebunden und
+  lebt, solange sie eingeschaltet ist — sie prüft deshalb alle 60 Sekunden und weckt
+  die Überwachung, wenn sie fehlt. Wer die Überwachung selbst pausiert hat, wird nicht
+  geweckt. Jeder Weckruf steht als eigene Zeile im Protokoll.
+
+Geprüft auf dem Upload-Pixel `FA69M0305152`: Nach der Installation meldete das
+Protokoll „16:36:01 Bedienungshilfe verbunden." und „16:36:01 Überwachung lief nicht –
+wird neu gestartet.", `dumpsys` zeigte einen lebenden Prozess, und die
+Herzenszeile rückte wieder exakt alle 30 Sekunden weiter.
 
 ## Änderungen in 1.2.0
 

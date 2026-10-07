@@ -1,11 +1,12 @@
 """sync_once: der Grundabgleich folgt dem Intervall, nicht jedem Zyklus."""
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from app import store, sync
+from app import batches, store, sync
 from app.config import DEFAULTS, save_config_atomic
 
 
@@ -82,3 +83,32 @@ def test_gemeldete_pfade_ohne_rekursivlauf(tmp_path, monkeypatch):
     sync.sync_once()
     assert _paths() == {"2026.09/IMG_20260901_120000.jpg",
                         "2026.09/IMG_20260902_120000.jpg"}
+
+
+def test_rueckbeleg_wird_vor_der_reprovision_gelesen(tmp_path, monkeypatch):
+    """Der Beleg ist schon da, die Handreichungskopie fehlt laenger als die
+    Schonfrist. sync_once muss abrechnen, bevor es auffuellt - sonst legt es eine
+    gerade freigegebene Datei zurueck aufs Telefon."""
+    archive, state = _roots(tmp_path, monkeypatch)
+    (archive / "2026.09").mkdir(parents=True)
+    (archive / "2026.09" / "a.jpg").write_bytes(b"a" * 100)
+    sync.sync_once()
+    staged = store.load_staged(state / "staged.json")
+    assert len(staged) == 1
+    entry = staged[0]
+    copy = batches.batch_dir(tmp_path / "staging", entry["BatchId"]) / entry["StagedName"]
+    copy.unlink()
+    aged = store.load_staged(state / "staged.json")
+    aged[0]["MissingSinceUtc"] = (datetime.now(timezone.utc)
+                                  - timedelta(hours=1)).isoformat()
+    store.save_staged(aged, state / "staged.json")
+    (tmp_path / "control" / "receipt-1.json").write_text(
+        json.dumps({"version": 1, "removedPaths": [entry["PixelSuffix"]]}), encoding="utf-8")
+
+    sync.sync_once()
+
+    # "Re-provided" ist der Beleg dafuer, dass die NAS zurueckkopiert hat, obwohl
+    # der Beleg schon im control-Ordner lag.
+    assert "Re-provided" not in (state / "PixelPhotoUploader.log").read_text(encoding="utf-8")
+    assert store.load_staged(state / "staged.json") == []
+    assert entry["Fingerprint"] in store.load_completion_sets()[0]

@@ -35,6 +35,12 @@ from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
 ALREADY_SECURED_REASON = "Google Photos already holds this content (nothing to free up)"
 REFUSAL_REASONS = ("Google Photos refused to free the file",)
 
+# Resilio braucht gemessen ein paar Minuten in beide Richtungen. Die Loeschung einer
+# Handreichungskopie ist also mehrere Durchlaeufe lang ohne Rueckbeleg sichtbar -
+# und genau die Zeit gibt repair_batches dem Beleg, bevor aus dem Archiv nachgelegt
+# wird. 600 s sind gut das Doppelte der langsamsten gemessenen Uebertragung.
+REPAIR_GRACE_SECONDS = 600.0
+
 
 def batch_dir(staging_root: Path, batch_id: str) -> Path:
     return staging_root / APP_BATCH_FOLDER / batch_id
@@ -350,6 +356,7 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         if str(entry.get("BatchId", "")):
             by_batch.setdefault(str(entry["BatchId"]), []).append(entry)
     changed = False
+    now = datetime.now(timezone.utc)
     staging_root = Path(str(cfg["StagingRoot"]))
     archive = Path(str(cfg["SourceRoot"]))
     for batch_id, entries in by_batch.items():
@@ -357,13 +364,31 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         for entry in entries:
             staged_p = d / str(entry.get("StagedName", ""))
             if entry.get("State") == "Staged" and staged_p.is_file():
+                if entry.pop("MissingSinceUtc", None) is not None:
+                    changed = True
                 continue
+            if entry.get("State") == "Staged":
+                # Complete and gone again: the phone freed it and Resilio carried the
+                # deletion back before the receipt could travel. Restocking here would
+                # undo a Google Photos free-up with our own hands, so the receipt gets
+                # the grace period first. An interrupted copy ("Copying") has never
+                # reached the phone and is still replaced at once.
+                missing_since = entry.get("MissingSinceUtc")
+                if not missing_since:
+                    entry["MissingSinceUtc"] = now.isoformat()
+                    changed = True
+                    write_log(f"Handover copy is gone; waiting for its receipt before "
+                              f"restocking: {entry.get('RelativePath')}", "WARN")
+                    continue
+                if (now - _parse_iso(str(missing_since))).total_seconds() < REPAIR_GRACE_SECONDS:
+                    continue
             src = archive / str(entry.get("RelativePath", ""))
             if not src.is_file():
                 raise FileNotFoundError(f"Cannot resume batch handover; source missing: {src}")
             copy_to_batch(src, d, str(entry["StagedName"]))
             entry["State"] = "Staged"
-            entry["StagedUtc"] = datetime.now(timezone.utc).isoformat()
+            entry["StagedUtc"] = now.isoformat()
+            entry.pop("MissingSinceUtc", None)
             changed = True
             write_log(f"Re-provided handover file: {entry.get('RelativePath')}", "OK")
         if (d / "_batch-manifest.json").is_file() and (d / "_batch-ready.txt").is_file():

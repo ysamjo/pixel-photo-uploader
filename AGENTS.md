@@ -11,6 +11,12 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Sagt Google Fotos zweimal in Folge „Nichts freizugeben", schickt die App einen Rückbeleg mit `refusedPaths`: `settle_refused()` bucht genau diese Dateien als „bereits gesichert" in `completed.csv` und gibt die Handreichung frei. Google Fotos hält den Inhalt schon – es ist ein drittes Urteil, keine Blockade. `migrate_refusal_blocks()` räumt die 3.3.15-`blocked.csv`-Absagen um.
 - Eine offene Handreichung hält die Queue nicht mehr auf: `select_and_stage_batch()` reiht neue Dateien ein, solange die wartenden nicht mehr als die Batch-Kapazität belegen.
 - Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 72 h): Eintrag nach `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt. `select_and_stage_batch()` überspricht blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
+- Läuft eine Handreichungskopie aus dem Batch-Ordner weg, wartet `repair_batches()`
+  die `REPAIR_GRACE_SECONDS` (600 s) auf den Rückbeleg, bevor es aus dem Archiv
+  nachlegt: Resilio trägt die Freigabe-Löschung des Telefons schneller zurück, als der
+  Beleg des Pixels läuft, und ein sofortiges Nachlegen würde eine gelungene
+  Speicherfreigabe mit eigenen Händen rückgängig machen. Deshalb rechnet `sync_once()`
+  erst ab (`confirm_staged`/`settle_refused`) und füllt danach auf.
 - Läuft 24/7 als ZimaOS-Container mit integriertem Web-UI und Hintergrund-Watcher.
 
 ## Konventionen
@@ -24,8 +30,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 ## Commands
 
 ```bash
-.venv/bin/pytest                     # 88 Tests, kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.16 .
+.venv/bin/pytest                     # 90 Tests, kein Netzwerk nötig
+docker build -t pixel-photo-uploader:3.3.17 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 

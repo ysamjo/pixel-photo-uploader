@@ -32,6 +32,7 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 5. **Datei für Datei abgerechnet:** Eine offene Handreichung hält die Queue nicht auf – der nächste Batch läuft mit, das Telefon hält dabei nie mehr als eine Batchgröße.
 6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 72 h) keinen Rückbeleg hat, wandert in `blocked.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; blockierte Fingerabdrücke laufen nie wieder ein.
 7. **Eine Absage ist ein Urteil, kein Fehler:** Sagt Google Fotos zweimal „Nichts freizugeben", hält es den Inhalt schon (meist von einem anderen Gerät). Die Datei kommt als *bereits gesichert* in `completed.csv`, nicht in `blocked.csv`, und die Queue läuft sofort weiter.
+8. **Erst der Beleg, dann die Nachlage:** Fehlt eine Handreichungskopie im Batch-Ordner, wartet der Server zehn Minuten auf den Rückbeleg, bevor er aus dem Archiv nachlegt. Resilio trägt die Löschung einer gelungenen Speicherfreigabe schneller zurück, als der Beleg des Pixels läuft – ein sofortiges Nachlegen würde die Freigabe des Telefons selbst rückgängig machen.
 
 ## Paketinhalt
 
@@ -53,7 +54,7 @@ app/                       Python-Kern
 android/                   Android Companion-App (PixelPhotoCompanion)
   app/build/outputs/apk/   Fertige app-debug.apk für das Pixel
 data/                      Ordnerstruktur für Bind-Mounts
-tests/                     71 Tests (pytest, kein Netzwerk nötig)
+tests/                     90 Tests (pytest, kein Netzwerk nötig)
 ```
 
 ## Installation auf ZimaOS
@@ -63,17 +64,17 @@ tests/                     71 Tests (pytest, kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.16 .
+docker build -t pixel-photo-uploader:3.3.17 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.16 | gzip > pixel-photo-uploader-3.3.16.tar.gz
-scp pixel-photo-uploader-3.3.16.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.17 | gzip > pixel-photo-uploader-3.3.17.tar.gz
+scp pixel-photo-uploader-3.3.17.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.16.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.17.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren

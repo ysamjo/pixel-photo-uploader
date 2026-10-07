@@ -199,6 +199,14 @@ Resilio-Freigabe gelegt.
   `select_and_stage_batch()` reiht neue Dateien nach, solange die Wartenden nicht
   mehr als die Batch-Kapazität belegen. Das Ledger schreibt vor der Löschung —
   sonst läse die App die eigene Handreichungsfreigabe als Google-Erfolg.
+- **Rückbeleg vor Nachlegen (3.3.17):** Verschwindet eine Handreichungskopie aus dem
+  Batch-Ordner, wartet `repair_batches()` zehn Minuten (`REPAIR_GRACE_SECONDS`) auf den
+  Rückbeleg, bevor es aus dem Archiv nachlegt. Resilio trägt die Löschung einer
+  gelungenen Speicherfreigabe schneller zurück, als der Beleg des Pixels läuft —
+  vorher schrieb die NAS die 97 freigegebenen Dateien selbst wieder in den Batch und
+  machte die Arbeit des Telefons zunichte. `sync_once()` rechnet deshalb erst ab und
+  füllt danach auf. Eine unterbrochene Kopie („Copying") erreicht das Telefon nie und
+  wird weiterhin sofort ersetzt.
 - Windows-PS1 ist eingefroren bei 3.3.12 (siehe `../Archiv/Windows-PS1-eingefroren-3.3.12/`).
 
 Release-Ablauf: Tag `v3.3.13` pushen → `.github/workflows/publish.yml` baut

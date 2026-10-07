@@ -51,13 +51,31 @@ public class PhotosAccessibilityService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastActionAt = 0L;
     private long lastInspectAt = 0L;
+    private long lastKeepAliveAt = 0L;
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
+            keepMonitorAlive();
             inspect();
             handler.postDelayed(this, 5_000L);
         }
     };
+
+    // Ein APK-Update beendet die App per Force-Stop, und der START_STICKY-Neustart der
+    // Überwachung überlebt das nicht: der Service-Record bleibt ohne Prozess hängen, der
+    // 30-Sekunden-Tick läuft nie wieder an. Die App meldet dann „Pausiert“ und auf der NAS
+    // fällt keine Fehlerzeile auf — die Queue steht still. Die Bedienungshilfe dagegen ist
+    // an das System gebunden und lebt, solange sie eingeschaltet ist; sie weckt die
+    // Überwachung wieder. Wer sie selbst pausiert hat (enabled=false), wird nicht geweckt.
+    private void keepMonitorAlive() {
+        long now = System.currentTimeMillis();
+        if (now - lastKeepAliveAt < 60_000L) return;
+        lastKeepAliveAt = now;
+        if (!AppState.prefs(this).getBoolean("enabled", false)) return;
+        if (BackupMonitorService.isRunning(this)) return;
+        AppState.log(this, "Überwachung lief nicht – wird neu gestartet.");
+        BackupMonitorService.start(this);
+    }
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();

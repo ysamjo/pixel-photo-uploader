@@ -385,3 +385,34 @@ def test_loesch_rueckbeleg_ist_keine_absage(tmp_path, monkeypatch):
     assert batches.settle_refused(cfg, staged_file) == 0
     assert len(store.load_staged(staged_file)) == 2
     assert not blocked_file.exists()
+
+
+def _missing_since(staged_file: Path, fingerprint: str, seconds: float) -> None:
+    """Die Handreichungskopie gilt als vor `seconds` Sekunden verschwunden."""
+    entries = store.load_staged(staged_file)
+    for entry in entries:
+        if entry["Fingerprint"] == fingerprint:
+            entry["MissingSinceUtc"] = (datetime.now(timezone.utc)
+                                        - timedelta(seconds=seconds)).isoformat()
+    store.save_staged(entries, staged_file)
+
+
+def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, monkeypatch):
+    """Resilio traegt die Freigabe-Loeschung der Handreichung schneller zurueck,
+    als der Rueckbeleg des Telefons laeuft. Die Archiv-Kopie liegt also ploetzlich
+    fehlend im Batch - und darf nicht sofort zurueckgelegt werden, sonst macht die
+    NAS die Freigabe selbst zunichte."""
+    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    batch = batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
+    copy = batch / staged[0]["StagedName"]
+    copy.unlink()
+
+    batches.repair_batches(cfg, staged_file)
+    assert not copy.exists()
+    assert store.load_staged(staged_file)[0]["MissingSinceUtc"]
+
+    _missing_since(staged_file, "fp-a.jpg", batches.REPAIR_GRACE_SECONDS + 1)
+    batches.repair_batches(cfg, staged_file)
+    assert copy.exists()
+    assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]

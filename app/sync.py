@@ -77,11 +77,13 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
             preflight(cfg)
         result = run_import(cfg)
         catalog = reconcile(cfg, result.get("archive_paths", ()), force_deep=force_deep)
-        repair_batches(cfg)
         migrate_refusal_blocks()
         confirmed = confirm_staged(cfg)
         refused = settle_refused(cfg)
         blocked = expire_staged(cfg)
+        # Belege zuerst, dann auffuellen: was gerade abgerechnet ist, braucht keine
+        # Kopie zurueck ins Archiv-Regal.
+        repair_batches(cfg)
         staged_count = select_and_stage_batch(cfg)
         return {"import": result, "catalog_files": len(catalog),
                 "confirmed": confirmed, "refused": refused, "blocked": blocked,
