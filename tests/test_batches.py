@@ -273,7 +273,7 @@ def _refusal_receipt(cfg: dict, entries: list[dict]) -> None:
 
 
 def test_absage_ist_unbestaetigt_und_wird_nicht_als_erfolg_gebucht(tmp_path, monkeypatch):
-    """„Nichts freizugeben“ beweist keinen Upload; die Archivkopie bleibt blockiert."""
+    """„Nichts freizugeben“ wird speicherfrei unverified, nicht completed/blocked."""
     cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     before = {e["Fingerprint"]: e for e in staged}
@@ -283,9 +283,11 @@ def test_absage_ist_unbestaetigt_und_wird_nicht_als_erfolg_gebucht(tmp_path, mon
 
     rest = store.load_staged(staged_file)
     assert [e["RelativePath"] for e in rest] == ["b.jpg"]
-    rows = store.load_blocked(blocked_file)
+    assert not blocked_file.exists()
+    rows = store.load_unverified(tmp_path / "state" / "unverified.csv")
     assert [r["RelativePath"] for r in rows] == ["a.jpg"]
     assert rows[0]["Reason"] == batches.UNVERIFIED_REFUSAL_REASON
+    assert rows[0]["Attempts"] == "1" and rows[0]["RetryAfterUtc"]
     assert store.load_completion_sets(tmp_path / "state" / "completed.csv")[0] == set()
     d = batches.batch_dir(Path(cfg["StagingRoot"]), rest[0]["BatchId"])
     assert (d / before["fp-a.jpg"]["StagedName"]).is_file() is False
@@ -294,28 +296,30 @@ def test_absage_ist_unbestaetigt_und_wird_nicht_als_erfolg_gebucht(tmp_path, mon
 
 
 def test_alte_absagen_bleiben_unbestaetigt(tmp_path, monkeypatch):
-    """Alte refusal rows werden eindeutig markiert; Timeout-Gründe bleiben erhalten."""
-    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    """Legacy-Refusals wandern aus blocked ins Unverified-Ledger; Timeouts bleiben blocked."""
+    _state(tmp_path, monkeypatch)
     blocked_file = tmp_path / "state" / "blocked.csv"
     completed_file = tmp_path / "state" / "completed.csv"
+    unverified_file = tmp_path / "state" / "unverified.csv"
     entries = [{"Fingerprint": f"fp-{i}", "Sha256": "", "RelativePath": f"{i}.jpg",
                 "Size": "100", "BatchId": "b1", "StagedUtc": ""} for i in (1, 2, 3)]
     store.append_blocked(entries[:2], "Google Photos refused to free the file", blocked_file)
     store.append_blocked(entries[2:], "No receipt within 72 h", blocked_file)
 
-    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 2
-    blocked = store.load_blocked(blocked_file)
-    assert [r["Fingerprint"] for r in blocked] == ["fp-1", "fp-2", "fp-3"]
-    assert [r["Reason"] for r in blocked[:2]] == [batches.UNVERIFIED_REFUSAL_REASON] * 2
-    assert blocked[2]["Reason"] == "No receipt within 72 h"
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file, unverified_file) == 2
+    assert [r["Fingerprint"] for r in store.load_blocked(blocked_file)] == ["fp-3"]
+    unverified = store.load_unverified(unverified_file)
+    assert [r["Fingerprint"] for r in unverified] == ["fp-1", "fp-2"]
+    assert all(r["Reason"] == batches.UNVERIFIED_REFUSAL_REASON for r in unverified)
     assert not completed_file.exists()
-    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 0
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file, unverified_file) == 0
 
 
-def test_alte_unbestaetigte_erfolge_und_abgeleitete_duplikate_wandern_nach_blocked(tmp_path, monkeypatch):
-    _, _, _ = _state(tmp_path, monkeypatch)
+def test_alte_unbestaetigte_erfolge_und_abgeleitete_duplikate_wandern_nach_unverified(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
     blocked_file = tmp_path / "state" / "blocked.csv"
     completed_file = tmp_path / "state" / "completed.csv"
+    unverified_file = tmp_path / "state" / "unverified.csv"
     rows = [
         {"Fingerprint": "refused", "Sha256": "hash-unverified", "RelativePath": "a.jpg",
          "Size": "10", "CompletedUtc": "2026-01-01T00:00:00+00:00",
@@ -332,8 +336,9 @@ def test_alte_unbestaetigte_erfolge_und_abgeleitete_duplikate_wandern_nach_block
         writer.writeheader()
         writer.writerows(rows)
 
-    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 2
-    assert {r["Fingerprint"] for r in store.load_blocked(blocked_file)} == {
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file, unverified_file) == 2
+    assert not blocked_file.exists()
+    assert {r["Fingerprint"] for r in store.load_unverified(unverified_file)} == {
         "refused", "derived-duplicate"}
     kept = list(csv.DictReader(completed_file.open(newline="", encoding="utf-8")))
     assert [r["Fingerprint"] for r in kept] == ["proven"]
@@ -433,6 +438,40 @@ def test_absage_haelt_keinen_neuen_batch_auf(tmp_path, monkeypatch):
 
     assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
     assert [e["RelativePath"] for e in store.load_staged(staged_file)] == ["c.jpg"]
+
+
+def test_unverified_wird_spaeter_klein_wieder_eingereiht_und_bei_beleg_entfernt(tmp_path, monkeypatch):
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    archive = Path(cfg["SourceRoot"])
+    src = archive / "retry.jpg"
+    src.write_bytes(os_bytes("retry.jpg"))
+    entry = {
+        "Fingerprint": "fp-retry", "Sha256": "", "RelativePath": "retry.jpg",
+        "Size": str(len(os_bytes("retry.jpg"))), "LastWriteUtc": "2024-01-01T00:00:00+00:00",
+        "Stable": "True",
+    }
+    store.save_catalog([entry], catalog_file)
+    store.save_staged([], staged_file)
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    store.save_unverified([{
+        "Fingerprint": "fp-retry", "Sha256": "", "RelativePath": "retry.jpg",
+        "Size": str(len(os_bytes("retry.jpg"))),
+        "FirstUnverifiedUtc": "2026-01-01T00:00:00+00:00",
+        "LastAttemptUtc": "2026-01-01T00:00:00+00:00",
+        "RetryAfterUtc": "2026-01-02T00:00:00+00:00",
+        "Attempts": "1", "Reason": batches.UNVERIFIED_REFUSAL_REASON,
+    }], unverified_file)
+
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file) == 1
+    staged = store.load_staged(staged_file)
+    assert staged[0]["VerificationRetry"] is True
+    assert store.load_unverified(unverified_file)
+
+    (Path(cfg["ControlRoot"]) / "receipt-retry.json").write_text(json.dumps({
+        "version": 1, "removedPaths": [staged[0]["PixelSuffix"]]
+    }), encoding="utf-8")
+    assert batches.confirm_staged(cfg, staged_file) == 1
+    assert store.load_unverified(unverified_file) == []
 
 
 def test_loesch_rueckbeleg_ist_keine_absage(tmp_path, monkeypatch):
