@@ -107,7 +107,8 @@ def status() -> dict:
     print(f"Katalog:      {info['catalog_files']} Dateien")
     print(f"Abgeschlossen:{info['completed']} Fingerabdruecke")
     print(f"Auf Pixel:    {info['staged']} Dateien")
-    print(f"Blockiert:    {info['blocked']} Dateien (kein Rueckbeleg, Archiv bleibt)")
+    print(f"Unbestätigt:  {info['unverified']} Dateien ({info['unverified_due']} retry-bereit; nicht auf Pixel)")
+    print(f"Blockiert:    {info['blocked']} Dateien (dauerhaft aus der Queue)")
     print(f"Offen:        {info['open_stable']} Dateien / "
           f"{info['open_bytes'] / 1024**3:.2f} GiB")
     if info["running"]:
