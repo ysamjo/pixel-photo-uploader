@@ -16,11 +16,13 @@ from . import catalog_path as default_catalog_path
 from . import completed_path as default_completed_path
 from . import staged_path as default_staged_path
 from . import blocked_path as default_blocked_path
+from . import unverified_path as default_unverified_path
 from .fingerprints import file_sha256
 from .store import (
     COMPLETED_FIELDS, add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
-    load_blocked, load_catalog, load_completion_sets, load_staged, save_blocked,
-    save_catalog, save_staged, _parse_iso,
+    due_unverified, load_blocked, load_catalog, load_completion_sets, load_staged,
+    load_unverified, remove_unverified, save_blocked, save_catalog, save_staged,
+    unverified_fingerprints, upsert_unverified, _parse_iso,
 )
 from .util import batch_capacity_bytes, clamp, write_log
 from . import MAX_BATCH_GIB, MIN_BATCH_GIB
@@ -31,6 +33,8 @@ from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
 ALREADY_SECURED_REASON = "Google Photos already holds this content (nothing to free up)"
 REFUSAL_REASONS = ("Google Photos refused to free the file",)
 UNVERIFIED_REFUSAL_REASON = "Google Photos reported nothing to free up; backup is unverified"
+UNVERIFIED_RETRY_HOURS = 24.0
+UNVERIFIED_RETRY_GIB = 0.5
 
 # Resilio braucht gemessen ein paar Minuten in beide Richtungen. Die Loeschung einer
 # Handreichungskopie ist also mehrere Durchlaeufe lang ohne Rueckbeleg sichtbar -
@@ -203,6 +207,7 @@ def confirm_staged(cfg: dict, staged_file: Path | None = None) -> int:
                 unconfirmed_by_batch.setdefault(batch_id, []).append(entry)
     save_staged(remaining, staged_file)
     if done:
+        remove_unverified([e.get("Fingerprint", "") for entries in confirmed_by_batch.values() for e in entries])
         write_log(f"{done} files confirmed via Android receipts.", "OK")
     staging_root = Path(str(cfg["StagingRoot"]))
     for batch_id, confirmed in confirmed_by_batch.items():
@@ -273,14 +278,12 @@ def _release_staged(cfg: dict, staged: list[dict], released: list[dict],
 
 def expire_staged(cfg: dict, staged_file: Path | None = None,
                   blocked_file: Path | None = None,
-                  now: datetime | None = None) -> int:
-    """Drop handover files that never got a receipt, so the queue moves on.
-
-    Without this a single rejected file blocks every later batch, because
-    staging waits for an empty staged.json.
-    """
+                  now: datetime | None = None,
+                  unverified_file: Path | None = None) -> int:
+    """Release handovers that never got a receipt so they cannot fill the Pixel."""
     staged_file = staged_file or default_staged_path()
     blocked_file = blocked_file or default_blocked_path()
+    unverified_file = unverified_file or default_unverified_path()
     staged = load_staged(staged_file)
     if not staged:
         return 0
@@ -292,16 +295,34 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
                and (reference - _parse_iso(str(e["StagedUtc"]))).total_seconds() / 3600 >= hours]
     if not expired:
         return 0
+
+    def record(entries: list[dict]) -> None:
+        retries = [e for e in entries if bool(e.get("VerificationRetry"))]
+        ordinary = [e for e in entries if not bool(e.get("VerificationRetry"))]
+        if ordinary:
+            append_blocked(ordinary, f"No receipt within {hours:g} h", blocked_file)
+        if retries:
+            upsert_unverified(retries,
+                              f"Verification retry got no receipt within {hours:g} h",
+                              unverified_file, retry_hours=UNVERIFIED_RETRY_HOURS)
+
     count = _release_staged(cfg, staged, expired, f"No receipt within {hours:g} h",
-                            staged_file, blocked_file)
-    write_log(f"{count} files got no receipt within {hours:g} h and are now "
-              f"blocked; their handover copies were released.", "WARN")
+                            staged_file, record=record)
+    retry_count = sum(1 for e in expired if bool(e.get("VerificationRetry")))
+    blocked_count = count - retry_count
+    if blocked_count:
+        write_log(f"{blocked_count} files got no receipt within {hours:g} h and are now "
+                  f"blocked; their handover copies were released.", "WARN")
+    if retry_count:
+        write_log(f"{retry_count} verification retries got no receipt; their Pixel copies "
+                  f"were released and they remain unverified.", "WARN")
     return count
 
-
-def settle_refused(cfg: dict, staged_file: Path | None = None) -> int:
-    """Block a refusal as unverified; it is not proof of successful backup."""
+def settle_refused(cfg: dict, staged_file: Path | None = None,
+                   unverified_file: Path | None = None) -> int:
+    """Release a refusal from the Pixel but keep it as retryable, unverified work."""
     staged_file = staged_file or default_staged_path()
+    unverified_file = unverified_file or default_unverified_path()
     staged = load_staged(staged_file)
     if not staged:
         return 0
@@ -312,28 +333,34 @@ def settle_refused(cfg: dict, staged_file: Path | None = None) -> int:
                if str(e.get("PixelSuffix", "")).lower() in hits]
     if not refused:
         return 0
+
+    def record(entries: list[dict]) -> None:
+        upsert_unverified(entries, UNVERIFIED_REFUSAL_REASON, unverified_file,
+                          retry_hours=UNVERIFIED_RETRY_HOURS)
+
     count = _release_staged(cfg, staged, refused, UNVERIFIED_REFUSAL_REASON,
-                            staged_file)
-    write_log(f"{count} files lack proof of backup after a Google Photos refusal; "
-              f"their handover copies were released and the archive copies remain.", "WARN")
+                            staged_file, record=record)
+    write_log(f"{count} files are unverified after a Google Photos refusal; "
+              f"their handover copies were released and will be retried later.", "WARN")
     return count
 
 
 def migrate_refusal_blocks(blocked_file: Path | None = None,
-                           completed_file: Path | None = None) -> int:
-    """Move legacy refusal completions back to the unverified queue ledger."""
+                           completed_file: Path | None = None,
+                           unverified_file: Path | None = None) -> int:
+    """Move legacy false-success/refusal rows into the retryable unverified ledger."""
     blocked_file = blocked_file or default_blocked_path()
     completed_file = completed_file or default_completed_path()
-    rows = load_blocked(blocked_file)
-    changed = False
-    converted_blocked = 0
-    for row in rows:
-        if str(row.get("Reason", "")) in REFUSAL_REASONS:
-            row["Reason"] = UNVERIFIED_REFUSAL_REASON
-            changed = True
-            converted_blocked += 1
+    unverified_file = unverified_file or default_unverified_path()
 
-    completed_rows = []
+    blocked_rows = load_blocked(blocked_file)
+    legacy_blocked = [r for r in blocked_rows
+                      if str(r.get("Reason", "")) in REFUSAL_REASONS
+                      or str(r.get("Reason", "")) == UNVERIFIED_REFUSAL_REASON]
+    if legacy_blocked:
+        save_blocked([r for r in blocked_rows if r not in legacy_blocked], blocked_file)
+
+    completed_rows: list[dict] = []
     if completed_file.exists():
         with completed_file.open(newline="", encoding="utf-8") as fh:
             completed_rows = list(csv.DictReader(fh))
@@ -344,8 +371,8 @@ def migrate_refusal_blocks(blocked_file: Path | None = None,
                        if str(r.get("Reason", "")) != ALREADY_SECURED_REASON
                        and str(r.get("Reason", "")) != "Identical content already completed"
                        and str(r.get("Sha256", "")).strip()}
-    moved = []
-    kept = []
+    legacy_completed: list[dict] = []
+    kept: list[dict] = []
     for row in completed_rows:
         reason = str(row.get("Reason", ""))
         sha = str(row.get("Sha256", "")).lower()
@@ -353,36 +380,25 @@ def migrate_refusal_blocks(blocked_file: Path | None = None,
                 or (reason == "Identical content already completed"
                     and sha in unverified_hashes
                     and sha not in verified_hashes)):
-            moved.append(row)
+            legacy_completed.append(row)
         else:
             kept.append(row)
-    known = {str(row.get("Fingerprint", "")).lower() for row in rows}
-    stamped = datetime.now(timezone.utc).isoformat()
-    for row in moved:
-        fp = str(row.get("Fingerprint", "")).strip()
-        if not fp or fp.lower() in known:
-            continue
-        known.add(fp.lower())
-        rows.append({"Fingerprint": fp, "Sha256": str(row.get("Sha256", "")),
-                     "RelativePath": str(row.get("RelativePath", "")),
-                     "Size": str(row.get("Size", "")), "BatchId": "", "StagedUtc": "",
-                     "BlockedUtc": stamped, "Reason": UNVERIFIED_REFUSAL_REASON})
-        changed = True
-    if changed:
-        save_blocked(rows, blocked_file)
-    if moved:
+
+    if legacy_completed:
         tmp = completed_file.with_suffix(completed_file.suffix + ".tmp")
         with tmp.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.DictWriter(fh, fieldnames=COMPLETED_FIELDS)
             writer.writeheader()
             writer.writerows(kept)
         tmp.replace(completed_file)
-    if changed or moved:
-        write_log(f"{len(moved)} legacy refusal completions moved and "
-                  f"{converted_blocked} old refusal blocks relabeled as unverified; "
-                  "their archive copies remain.", "WARN")
-    return len(moved) + converted_blocked
 
+    migrated = legacy_blocked + legacy_completed
+    if migrated:
+        upsert_unverified(migrated, UNVERIFIED_REFUSAL_REASON, unverified_file,
+                          retry_hours=UNVERIFIED_RETRY_HOURS)
+        write_log(f"{len(migrated)} legacy unverified entries moved into the retry ledger; "
+                  "their archive copies remain and no Pixel space is held.", "WARN")
+    return len(migrated)
 
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
     staged_file = staged_file or default_staged_path()
@@ -439,46 +455,90 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
 
 
 def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
-                            staged_file: Path | None = None) -> int:
+                            staged_file: Path | None = None,
+                            unverified_file: Path | None = None) -> int:
     catalog = load_catalog(catalog_file)
     staged = load_staged(staged_file)
+    unverified_file = unverified_file or default_unverified_path()
     capacity = batch_capacity_bytes(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
-    # File-level, not batch-level: a receipt settles file by file, so a handful of
-    # files still waiting must not stop the next batch. What stays is the phone's own
-    # space: every unsettled handover copy lies on the device at once, however many
-    # batch folders it is spread over - so the open ones together may never exceed
-    # one batch capacity.
     held_bytes = sum(int(str(e.get("Size", "0")) or 0) for e in staged)
     room = capacity - held_bytes
     if room <= 0:
         write_log(f"{len(staged)} files already hold the whole "
                   f"{capacity / 1024**3:.2f} GiB handover capacity; nothing new staged.")
         return 0
+
     staged_fps = {str(e.get("Fingerprint", "")).lower() for e in staged}
     fps, hashes = load_completion_sets()
     blocked = blocked_fingerprints()
+    unverified = unverified_fingerprints(unverified_file)
     archive = Path(str(cfg["SourceRoot"]))
     selected: list[dict] = []
+    retry_fps: set[str] = set()
     selected_bytes = 0
+    retry_bytes = 0
+    retry_budget = min(room, int(UNVERIFIED_RETRY_GIB * 1024**3))
     catalog_changed = False
+
+    # Verification retries are deliberately small and go first. They are not part
+    # of the normal queue, so a large uncertain backlog cannot refill the Pixel.
+    due = sorted(due_unverified(unverified_file),
+                 key=lambda e: (str(e.get("RetryAfterUtc", "")),
+                                str(e.get("FirstUnverifiedUtc", "")),
+                                str(e.get("RelativePath", ""))))
+    for entry in due:
+        rel = str(entry.get("RelativePath", "")).strip()
+        fp = str(entry.get("Fingerprint", "")).strip()
+        key = fp.lower()
+        if not rel or not fp or key in fps or key in blocked or key in staged_fps:
+            continue
+        try:
+            size = int(str(entry.get("Size", "0")) or 0)
+        except ValueError:
+            continue
+        if size > capacity or selected_bytes + size > room:
+            continue
+        if retry_fps and retry_bytes + size > retry_budget:
+            continue
+        src = archive / rel
+        if not src.is_file():
+            continue
+        if src.stat().st_size == 0:
+            append_blocked([entry], "Empty file - nothing for Google Photos to back up")
+            remove_unverified([fp], unverified_file)
+            unverified.discard(key)
+            continue
+        sha = str(entry.get("Sha256", "")).strip()
+        if not sha:
+            write_log(f"Checksum for verification retry: {rel}")
+            sha = file_sha256(src)
+            entry["Sha256"] = sha
+        if sha.lower() in hashes:
+            add_completion(entry, fps, hashes, "Identical content already completed")
+            remove_unverified([fp], unverified_file)
+            unverified.discard(key)
+            write_log(f"Unverified content is now proven by an identical completion: {rel}", "OK")
+            continue
+        selected.append(entry)
+        retry_fps.add(key)
+        selected_bytes += size
+        retry_bytes += size
+
     for entry in sorted(catalog, key=catalog_sort_key):
         rel = str(entry.get("RelativePath", "")).strip()
         fp = str(entry.get("Fingerprint", "")).strip()
+        key = fp.lower()
         if not rel or not fp:
             write_log(f"Catalog row without path or fingerprint skipped "
                       f"(fields: {sorted(entry.keys())})", "ERROR")
             continue
-        if str(entry.get("Stable")) != "True":
+        if str(entry.get("Stable")) != "True" or key in fps or key in blocked:
             continue
-        if fp.lower() in fps:
-            continue
-        if fp.lower() in blocked:
-            continue
-        if fp.lower() in staged_fps:
+        if key in unverified or key in staged_fps or key in retry_fps:
             continue
         size = int(entry.get("Size", 0))
         if size > capacity:
-            write_log(f"Single file larger than batch capacity, skipped: {entry.get('RelativePath')}", "WARN")
+            write_log(f"Single file larger than batch capacity, skipped: {rel}", "WARN")
             continue
         if selected_bytes + size > room:
             continue
@@ -486,8 +546,6 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
         if not src.is_file():
             continue
         if src.stat().st_size == 0:
-            # Cloud mounts hand over 0-byte placeholders now and then. Google Photos never
-            # confirms one, so it would hold the whole batch open for BackupTimeoutHours.
             append_blocked([entry], "Empty file - nothing for Google Photos to back up")
             write_log(f"Empty file, released from the queue: {rel}", "WARN")
             continue
@@ -502,18 +560,22 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             continue
         selected.append(entry)
         selected_bytes += size
+
     if catalog_changed:
         save_catalog(catalog, catalog_file)
     if not selected:
         return 0
+
     batch_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    write_log(f"Staging batch with {len(selected)} files, {selected_bytes / 1024**3:.2f} GiB.")
+    write_log(f"Staging batch with {len(selected)} files, {selected_bytes / 1024**3:.2f} GiB"
+              f" ({len(retry_fps)} verification retries).")
     staging_root = Path(str(cfg["StagingRoot"]))
     d = batch_dir(staging_root, batch_id)
     new_records: list[dict] = []
     try:
         for i, entry in enumerate(selected, start=1):
             ext = Path(str(entry["RelativePath"])).suffix.lower()
+            fp_key = str(entry["Fingerprint"]).lower()
             staged_name = f"{i:06d}-{str(entry['Fingerprint'])[:12]}{ext}"
             suffix = f"/{APP_BATCH_FOLDER}/{batch_id}/{staged_name}"
             rec = {
@@ -521,15 +583,13 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
                 "RelativePath": str(entry["RelativePath"]), "Size": str(entry.get("Size", "")),
                 "RemotePath": suffix, "BatchId": batch_id, "StagedName": staged_name,
                 "PixelSuffix": suffix, "State": "Copying", "StagedUtc": "",
+                "VerificationRetry": fp_key in retry_fps,
             }
             new_records.append(rec)
             write_log(f"Handing over via Resilio folder: {entry.get('RelativePath')}")
             copy_to_batch(archive / str(entry["RelativePath"]), d, staged_name)
             rec["State"] = "Staged"
             rec["StagedUtc"] = datetime.now(timezone.utc).isoformat()
-            # Crash-resume checkpoint, not every file: a 900-file batch wrote
-            # staged.json ~1800 times. Lost tail entries are simply re-selected
-            # next run (their fingerprints are not completed), never lost.
             if i % 25 == 0:
                 save_staged(staged + new_records, staged_file)
     except Exception as exc:
@@ -540,7 +600,6 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     write_batch_markers(staging_root, batch_id, selected)
     write_log(f"Batch ready in handover folder: {d}", "OK")
     return len(selected)
-
 
 def batch_gib_clamped(cfg: dict) -> float:
     return clamp(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
