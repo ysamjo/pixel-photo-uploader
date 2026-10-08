@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (BULK_PATH_LIMIT, SCAN_PRUNE_GRACE_HOURS, blocked_path, catalog_path,
-               completed_path, lastscan_path, staged_path)
+               completed_path, lastscan_path, staged_path, unverified_path)
 from .fingerprints import fingerprint, is_supported_media, win_roundtrip_utc
 from .media import is_file_ready
 from .util import write_log
@@ -18,6 +18,9 @@ CATALOG_FIELDS = ["Fingerprint", "RelativePath", "Size", "LastWriteUtc", "Stable
 COMPLETED_FIELDS = ["Fingerprint", "Sha256", "RelativePath", "Size", "CompletedUtc", "Reason"]
 BLOCKED_FIELDS = ["Fingerprint", "Sha256", "RelativePath", "Size", "BatchId",
                   "StagedUtc", "BlockedUtc", "Reason"]
+UNVERIFIED_FIELDS = ["Fingerprint", "Sha256", "RelativePath", "Size",
+                     "FirstUnverifiedUtc", "LastAttemptUtc", "RetryAfterUtc",
+                     "Attempts", "Reason"]
 
 
 def _parse_iso(value: str) -> datetime:
@@ -163,6 +166,108 @@ def append_blocked(entries: list[dict], reason: str, path: Path | None = None) -
         return 0
     save_blocked(rows, p)
     return added
+
+
+
+def load_unverified(path: Path | None = None) -> list[dict]:
+    p = path or unverified_path()
+    if not p.exists():
+        return []
+    with p.open(newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def save_unverified(entries: list[dict], path: Path | None = None) -> None:
+    p = path or unverified_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=UNVERIFIED_FIELDS)
+        w.writeheader()
+        w.writerows(entries)
+    tmp.replace(p)
+
+
+def unverified_fingerprints(path: Path | None = None) -> set[str]:
+    return {str(row.get("Fingerprint", "")).lower() for row in load_unverified(path)
+            if str(row.get("Fingerprint", "")).strip()}
+
+
+def upsert_unverified(entries: list[dict], reason: str, path: Path | None = None,
+                      retry_hours: float = 24.0, now: datetime | None = None) -> int:
+    """Record uncertain backup outcomes without keeping a copy on the Pixel."""
+    p = path or unverified_path()
+    rows = load_unverified(p)
+    by_fp = {str(row.get("Fingerprint", "")).lower(): row for row in rows
+             if str(row.get("Fingerprint", "")).strip()}
+    stamp_dt = now or datetime.now(timezone.utc)
+    stamp = stamp_dt.isoformat()
+    retry_at = (stamp_dt + timedelta(hours=retry_hours)).isoformat()
+    changed = 0
+    for entry in entries:
+        fp = str(entry.get("Fingerprint", "")).strip()
+        if not fp:
+            continue
+        key = fp.lower()
+        row = by_fp.get(key)
+        if row is None:
+            row = {
+                "Fingerprint": fp,
+                "Sha256": str(entry.get("Sha256", "")),
+                "RelativePath": str(entry.get("RelativePath", "")),
+                "Size": str(entry.get("Size", "")),
+                "FirstUnverifiedUtc": stamp,
+                "LastAttemptUtc": stamp,
+                "RetryAfterUtc": retry_at,
+                "Attempts": "1",
+                "Reason": reason,
+            }
+            rows.append(row)
+            by_fp[key] = row
+        else:
+            try:
+                attempts = int(str(row.get("Attempts", "0")) or 0)
+            except ValueError:
+                attempts = 0
+            row.update({
+                "Sha256": str(entry.get("Sha256", row.get("Sha256", ""))),
+                "RelativePath": str(entry.get("RelativePath", row.get("RelativePath", ""))),
+                "Size": str(entry.get("Size", row.get("Size", ""))),
+                "LastAttemptUtc": stamp,
+                "RetryAfterUtc": retry_at,
+                "Attempts": str(attempts + 1),
+                "Reason": reason,
+            })
+            if not str(row.get("FirstUnverifiedUtc", "")).strip():
+                row["FirstUnverifiedUtc"] = stamp
+        changed += 1
+    if changed:
+        save_unverified(rows, p)
+    return changed
+
+
+def due_unverified(path: Path | None = None, now: datetime | None = None) -> list[dict]:
+    reference = now or datetime.now(timezone.utc)
+    due: list[dict] = []
+    for row in load_unverified(path):
+        retry = _parse_utc(row.get("RetryAfterUtc"))
+        if retry == NEVER or retry <= reference:
+            due.append(row)
+    return due
+
+
+def remove_unverified(fingerprints, path: Path | None = None) -> int:
+    keys = {str(fp).lower() for fp in fingerprints if str(fp).strip()}
+    if not keys:
+        return 0
+    p = path or unverified_path()
+    rows = load_unverified(p)
+    keep = [row for row in rows
+            if str(row.get("Fingerprint", "")).lower() not in keys]
+    removed = len(rows) - len(keep)
+    if removed:
+        save_unverified(keep, p)
+    return removed
 
 
 def _parse_utc(value) -> datetime:
