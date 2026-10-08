@@ -287,13 +287,15 @@ public class PhotosAccessibilityService extends AccessibilityService {
                     if (!line.trim().isEmpty()) stuck.add(line.trim());
                 }
                 // Keine Erfolgsbuchung: „Nichts freizugeben“ beweist nicht, dass Google Fotos
-                // die Datei bereits gesichert hat. Der Server gibt sie nach seinem Timeout frei.
+                // die Datei bereits gesichert hat. Das Urteil geht sofort an den Server, damit
+                // dieser die Handreichung vom Pixel entfernt und separat zur Nachprüfung merkt.
                 AppState.rememberRefused(this, stuck);
                 prefs.edit().putInt("nothingToFreeRounds", refused)
-                        .putLong("nextAttemptAt", System.currentTimeMillis() + 30 * 60_000L).apply();
+                        .putString("pendingReceiptRefused", join(stuck))
+                        .putLong("nextAttemptAt", Long.MAX_VALUE).apply();
                 AppState.phase(this, AppState.PHASE_MONITORING,
                         stuck.size() + " Dateien sind unbestätigt: Google Fotos meldet wiederholt „Nichts freizugeben“. "
-                                + "Kein Erfolgsbeleg; der Server gibt die Handreichung nach seinem Timeout frei.");
+                                + "Kein Erfolgsbeleg; das Urteil wird sofort an den Server übergeben.");
                 return;
             }
             prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L)
