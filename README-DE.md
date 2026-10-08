@@ -31,7 +31,7 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 4. **Screenshots & Memes:** Bleiben im Eingang und gehen nie ans Pixel.
 5. **Datei für Datei abgerechnet:** Eine offene Handreichung hält die Queue nicht auf – der nächste Batch läuft mit, das Telefon hält dabei nie mehr als eine Batchgröße.
 6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 72 h) keinen Rückbeleg hat, wandert in `blocked.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; blockierte Fingerabdrücke laufen nie wieder ein.
-7. **Eine Absage ist ein Urteil, kein Fehler:** Sagt Google Fotos zweimal „Nichts freizugeben", hält es den Inhalt schon (meist von einem anderen Gerät). Die Datei kommt als *bereits gesichert* in `completed.csv`, nicht in `blocked.csv`, und die Queue läuft sofort weiter.
+7. **Eine Absage ist kein Erfolgsbeleg:** Sagt Google Fotos zweimal „Nichts freizugeben", bleibt der Upload unbestätigt. Die Datei kommt mit eigenem Grund in `blocked.csv`; nur ihr Eintrag im Übergabeordner wird freigegeben. Die Archiv-Kopie bleibt erhalten.
 8. **Erst der Beleg, dann die Nachlage:** Fehlt eine Handreichungskopie im Batch-Ordner, wartet der Server zehn Minuten auf den Rückbeleg, bevor er aus dem Archiv nachlegt. Resilio trägt die Löschung einer gelungenen Speicherfreigabe schneller zurück, als der Beleg des Pixels läuft – ein sofortiges Nachlegen würde die Freigabe des Telefons selbst rückgängig machen.
 
 Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
@@ -57,7 +57,7 @@ app/                       Python-Kern
 android/                   Android Companion-App (PixelPhotoCompanion)
   app/build/outputs/apk/   Fertige app-debug.apk für das Pixel
 data/                      Ordnerstruktur für Bind-Mounts
-tests/                     90 Tests (pytest, kein Netzwerk nötig)
+tests/                     pytest-Suite (kein Netzwerk nötig)
 ```
 
 ## Installation auf ZimaOS
@@ -67,23 +67,23 @@ tests/                     90 Tests (pytest, kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.17 .
+docker build -t pixel-photo-uploader:3.3.18 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.17 | gzip > pixel-photo-uploader-3.3.17.tar.gz
-scp pixel-photo-uploader-3.3.17.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.18 | gzip > pixel-photo-uploader-3.3.18.tar.gz
+scp pixel-photo-uploader-3.3.18.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.17.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.18.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren
 
 1. In ZimaOS auf **App Store** -> **Install a customized app** klicken.
-2. Den Inhalt der [docker-compose.yml](file:///Users/family/Developer/pixel-photo-uploader-docker/docker-compose.yml) einfügen.
+2. Den Inhalt der [docker-compose.yml](docker-compose.yml) einfügen.
 3. Die Hostpfade bei Bedarf anpassen (Standard: `/DATA/Media/Photos/Archiv`, `/DATA/AppData/pixel-photo-uploader/...`).
 4. Installieren & starten.
 
@@ -97,7 +97,7 @@ In Resilio Sync genau **einen** Ordner teilen:
 ### 4. Pixel Companion App installieren
 
 Die fertige APK liegt unter:
-[`android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk`](file:///Users/family/Developer/pixel-photo-uploader-docker/android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk)
+[`android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk`](android/PixelPhotoCompanion/app/build/outputs/apk/debug/app-debug.apk)
 
 Auf dem Pixel installieren, Berechtigungen für Speicher und Barrierefreiheit (für Google Fotos Status-Erkennung) erteilen.
 
@@ -116,4 +116,4 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Alle 71 Tests laufen ohne Docker und ohne Netzwerkzugriffe.
+Die pytest-Suite läuft ohne Docker und ohne Netzwerkzugriffe.

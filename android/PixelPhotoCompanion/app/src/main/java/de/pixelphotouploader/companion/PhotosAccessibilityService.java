@@ -30,13 +30,8 @@ public class PhotosAccessibilityService extends AccessibilityService {
     // und neun Stunden Schlaf sind kein Grund für einen Fehlerzustand.
     private static final int FREE_UP_ROUNDS = 6;
     private static final long FREE_UP_ROUND_SPACING = 5 * 60_000L;
-    // So oft darf Google Fotos „Nichts freizugeben“ melden, während noch Batchdateien auf dem
-    // Gerät liegen. Getrennt von freeUpRound gezählt: „nichts freizugeben“ ist kein Klickproblem,
-    // das ein weiterer Versuch löst, sondern Fotos' eigene Aussage, dass es diese Dateien nicht
-    // anfassen will. Zwei Runden reichen: die Aussage ist eindeutig, und was nach 30 Minuten
-    // nicht freizugeben ist, ist es nach 90 Minuten auch nicht. Die Absage ist ein Urteil —
-    // der Server rechnet sie als „bereits gesichert“ ab, statt die Queue bis zum
-    // BackupTimeoutHours offen zu halten.
+    // So oft darf Google Fotos „Nichts freizugeben“ melden, bevor wir die Datei als
+    // unbestätigt melden und den Server die Handreichung nach seinem Timeout freigeben lassen.
     private static final int NOTHING_TO_FREE_ROUNDS = 2;
     // Wörter, die eine laufende Sicherung beweisen. Sie heavier als die Fehlerwörter unten:
     // Promo- und Onboarding-Karten von Google Fotos enthalten Sätze wie „Backup is off“,
@@ -46,7 +41,8 @@ public class PhotosAccessibilityService extends AccessibilityService {
             "hochladen läuft", "fotos werden gesichert", "videos werden gesichert",
             "sicherung wird vorbereitet", "synchronis",
             "backing up", "preparing backup", "getting ready to back up", "uploading",
-            "items left", "item left", "elemente verbleibend", "element verbleibend", "elemente"
+            "items left", "item left", "elemente verbleibend", "element verbleibend", "elemente",
+            "checking time remaining", "remaining time", "keep the app open", "keep app open"
     };
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastActionAt = 0L;
@@ -127,14 +123,12 @@ public class PhotosAccessibilityService extends AccessibilityService {
 
         String errorHit = firstMatch(all,
                 "sicherung ist deaktiviert", "sicherung deaktiviert", "sicherung aus", "sicherung ausgeschaltet",
-                "sicherung pausiert", "sicherung angehalten", "sicherungsfehler", "sicherung fehlgeschlagen",
+                "sicherungsfehler", "sicherung fehlgeschlagen",
                 "fehler bei der sicherung", "nicht gesichert", "keine sicherung", "fehlgeschlagen",
-                "backup is off", "backup off", "backup turned off", "backup paused", "backup pausiert",
+                "backup is off", "backup off", "backup turned off",
                 "backup error", "backup failed", "not backed up", "no backup",
                 "kontospeicher voll", "account storage full", "account storage is full",
-                "warten auf wlan", "warten auf netzwerk", "keine verbindung", "offline",
-                "waiting for wi-fi", "waiting for wifi", "waiting for network", "waiting for connection",
-                "no connection", "konnte nicht gesichert", "couldn't back up", "could not back up");
+                "konnte nicht gesichert", "couldn't back up", "could not back up");
         if (errorHit != null && !containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
             // Der gefundene Wortlaut steht in der Meldung: ohne ihn war ein Fehlalarm von
             // einem echten Sicherungsstopp auf dem Gerät nicht zu unterscheiden.
@@ -292,17 +286,14 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 for (String line : prefs.getString("batchPaths", "").split("\\n")) {
                     if (!line.trim().isEmpty()) stuck.add(line.trim());
                 }
-                // nextAttemptAt auf Maximum: nur der Fehlerzustand allein hält die Automatik nicht
-                // an — ohne Sperre hätte sie Google Fotos weiterhin alle 45 Sekunden vorgeholt.
-                // Die Liste geht als Rückbeleg an den Server: dessen Handreichung bliebe sonst bis
-                // BackupTimeoutHours stehen, obwohl das Telefon sein Urteil schon gesprochen hat.
+                // Keine Erfolgsbuchung: „Nichts freizugeben“ beweist nicht, dass Google Fotos
+                // die Datei bereits gesichert hat. Der Server gibt sie nach seinem Timeout frei.
+                AppState.rememberRefused(this, stuck);
                 prefs.edit().putInt("nothingToFreeRounds", refused)
-                        .putString("pendingReceiptRefused", join(stuck))
-                        .putLong("nextAttemptAt", Long.MAX_VALUE).apply();
-                AppState.phase(this, AppState.PHASE_ERROR,
-                        "Google Fotos gibt " + stuck.size() + " überwachte Dateien nicht frei ("
-                                + refused + " Mal „Nichts freizugeben“). Es wurde nichts freigegeben; "
-                                + "der Rückbeleg übergibt das Urteil an den Server.");
+                        .putLong("nextAttemptAt", System.currentTimeMillis() + 30 * 60_000L).apply();
+                AppState.phase(this, AppState.PHASE_MONITORING,
+                        stuck.size() + " Dateien sind unbestätigt: Google Fotos meldet wiederholt „Nichts freizugeben“. "
+                                + "Kein Erfolgsbeleg; der Server gibt die Handreichung nach seinem Timeout frei.");
                 return;
             }
             prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L)

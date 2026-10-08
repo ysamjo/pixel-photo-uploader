@@ -8,7 +8,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Packt Abhol-Batches (standardmäßig 5 GiB) in die Resilio-Sync-Freigabe `staging/Batches/`.
 - Die Android Companion-App (`PixelPhotoCompanion`) auf dem Pixel übernimmt den Batch, wartet auf die Bestätigung von Google Fotos ("Sicherung abgeschlossen") und schreibt einen Rückbeleg `receipt-*.json` in den `control/`-Ordner.
 - Der Uploader rechnet den Rückbeleg ab, markiert die Dateien in `completed.csv` als gesichert und löscht den Batch auf dem Pixel.
-- Sagt Google Fotos zweimal in Folge „Nichts freizugeben", schickt die App einen Rückbeleg mit `refusedPaths`: `settle_refused()` bucht genau diese Dateien als „bereits gesichert" in `completed.csv` und gibt die Handreichung frei. Google Fotos hält den Inhalt schon – es ist ein drittes Urteil, keine Blockade. `migrate_refusal_blocks()` räumt die 3.3.15-`blocked.csv`-Absagen um.
+- Sagt Google Fotos zweimal in Folge „Nichts freizugeben", ist das **kein Erfolgsbeleg**: `settle_refused()` führt die Datei als unbestätigt in `blocked.csv` und gibt die Handreichung frei. Die Archiv-Kopie bleibt. `migrate_refusal_blocks()` verschiebt alte, unbelegte Absagen aus `completed.csv` in dieses Register.
 - Eine offene Handreichung hält die Queue nicht mehr auf: `select_and_stage_batch()` reiht neue Dateien ein, solange die wartenden nicht mehr als die Batch-Kapazität belegen.
 - Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 72 h): Eintrag nach `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt. `select_and_stage_batch()` überspricht blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
 - Läuft eine Handreichungskopie aus dem Batch-Ordner weg, wartet `repair_batches()`
@@ -34,8 +34,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 ## Commands
 
 ```bash
-.venv/bin/pytest                     # 90 Tests, kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.17 .
+.venv/bin/pytest                     # kein Netzwerk nötig
+docker build -t pixel-photo-uploader:3.3.18 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 

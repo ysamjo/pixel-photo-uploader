@@ -5,6 +5,7 @@ Confirm-AppStagedBatches / Repair-AppBatches / Select-AndStageBatch (App branch)
 """
 from __future__ import annotations
 
+import csv
 import json
 import shutil
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from . import staged_path as default_staged_path
 from . import blocked_path as default_blocked_path
 from .fingerprints import file_sha256
 from .store import (
-    add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
+    COMPLETED_FIELDS, add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
     load_blocked, load_catalog, load_completion_sets, load_staged, save_blocked,
     save_catalog, save_staged, _parse_iso,
 )
@@ -26,14 +27,10 @@ from . import MAX_BATCH_GIB, MIN_BATCH_GIB
 from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
                MIN_BACKUP_TIMEOUT_HOURS)
 
-# Google Fotos hat den Inhalt schon: Nach zweimal bestätigter Sicherung meldet das
-# Telefon „Nichts freizugeben", und die Datei liegt weiter im Handreichungsordner.
-# Für eine Bibliothek, die aus mehreren Geräten gefüttert wird, ist das kein
-# Problemfall — es ist dieselbe Auskunft wie ein Freigabe-Beleg, nur von einem
-# anderen Gerät gebucht. blocked.csv wäre die falsche Kladde: sie zählt sie als
-# Misserfolg, und die 3.3.15 hat genau das getan.
+# Legacy reason for completion rows written before refusal evidence was reclassified.
 ALREADY_SECURED_REASON = "Google Photos already holds this content (nothing to free up)"
 REFUSAL_REASONS = ("Google Photos refused to free the file",)
+UNVERIFIED_REFUSAL_REASON = "Google Photos reported nothing to free up; backup is unverified"
 
 # Resilio braucht gemessen ein paar Minuten in beide Richtungen. Die Loeschung einer
 # Handreichungskopie ist also mehrere Durchlaeufe lang ohne Rueckbeleg sichtbar -
@@ -228,6 +225,17 @@ def backup_timeout_hours(cfg: dict) -> float:
                  MIN_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS)
 
 
+def _valid_staged_time(value: str) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    try:
+        datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
 def _release_staged(cfg: dict, staged: list[dict], released: list[dict],
                     reason: str, staged_file: Path, blocked_file: Path | None = None,
                     record=None) -> int:
@@ -279,8 +287,9 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
     hours = backup_timeout_hours(cfg)
     reference = now or datetime.now(timezone.utc)
     expired = [e for e in staged
-               if (reference - _parse_iso(str(e.get("StagedUtc", "")))).total_seconds() / 3600
-               >= hours]
+               if e.get("State") == "Staged"
+               and _valid_staged_time(str(e.get("StagedUtc", "")))
+               and (reference - _parse_iso(str(e["StagedUtc"]))).total_seconds() / 3600 >= hours]
     if not expired:
         return 0
     count = _release_staged(cfg, staged, expired, f"No receipt within {hours:g} h",
@@ -291,15 +300,7 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
 
 
 def settle_refused(cfg: dict, staged_file: Path | None = None) -> int:
-    """Book the files the Pixel reports back as never freeable.
-
-    The companion app gives up after its own "Nothing to free up" rounds and says
-    so in a receipt. Those files are not failures: Google Photos holds the content
-    already, so it has nothing to free on this phone. They leave the queue as
-    secured, which keeps them out of the next batch without hiding them in
-    blocked.csv — and the handover lets go of them right away instead of holding
-    the whole queue through the backup timeout.
-    """
+    """Block a refusal as unverified; it is not proof of successful backup."""
     staged_file = staged_file or default_staged_path()
     staged = load_staged(staged_file)
     if not staged:
@@ -311,41 +312,76 @@ def settle_refused(cfg: dict, staged_file: Path | None = None) -> int:
                if str(e.get("PixelSuffix", "")).lower() in hits]
     if not refused:
         return 0
-    fps, hashes = load_completion_sets()
-
-    def record(entries: list[dict]) -> None:
-        for entry in entries:
-            add_completion(entry, fps, hashes, ALREADY_SECURED_REASON)
-
-    count = _release_staged(cfg, staged, refused, ALREADY_SECURED_REASON,
-                            staged_file, record=record)
-    write_log(f"{count} files are already in Google Photos; booked as secured and "
-              f"their handover copies released.", "OK")
+    count = _release_staged(cfg, staged, refused, UNVERIFIED_REFUSAL_REASON,
+                            staged_file)
+    write_log(f"{count} files lack proof of backup after a Google Photos refusal; "
+              f"their handover copies were released and the archive copies remain.", "WARN")
     return count
 
 
 def migrate_refusal_blocks(blocked_file: Path | None = None,
                            completed_file: Path | None = None) -> int:
-    """Re-book the refusals that the 3.3.15 filed as blocked.
-
-    Until then a refusal was indistinguishable from a timeout in the ledger, and
-    both landed in blocked.csv. The refusal rows are successes of a different
-    provenance; the timeout rows keep their problem-case place.
-    """
+    """Move legacy refusal completions back to the unverified queue ledger."""
     blocked_file = blocked_file or default_blocked_path()
     completed_file = completed_file or default_completed_path()
     rows = load_blocked(blocked_file)
-    moved = [r for r in rows if str(r.get("Reason", "")) in REFUSAL_REASONS]
-    if not moved:
-        return 0
-    fps, hashes = load_completion_sets(completed_file)
-    for entry in moved:
-        add_completion(entry, fps, hashes, ALREADY_SECURED_REASON, completed_file)
-    save_blocked([r for r in rows if str(r.get("Reason", "")) not in REFUSAL_REASONS],
-                 blocked_file)
-    write_log(f"{len(moved)} refused files from the blocked ledger are now booked as "
-              f"secured: Google Photos already holds their content.", "OK")
-    return len(moved)
+    changed = False
+    converted_blocked = 0
+    for row in rows:
+        if str(row.get("Reason", "")) in REFUSAL_REASONS:
+            row["Reason"] = UNVERIFIED_REFUSAL_REASON
+            changed = True
+            converted_blocked += 1
+
+    completed_rows = []
+    if completed_file.exists():
+        with completed_file.open(newline="", encoding="utf-8") as fh:
+            completed_rows = list(csv.DictReader(fh))
+    unverified_hashes = {str(r.get("Sha256", "")).lower() for r in completed_rows
+                         if str(r.get("Reason", "")) == ALREADY_SECURED_REASON
+                         and str(r.get("Sha256", "")).strip()}
+    verified_hashes = {str(r.get("Sha256", "")).lower() for r in completed_rows
+                       if str(r.get("Reason", "")) != ALREADY_SECURED_REASON
+                       and str(r.get("Reason", "")) != "Identical content already completed"
+                       and str(r.get("Sha256", "")).strip()}
+    moved = []
+    kept = []
+    for row in completed_rows:
+        reason = str(row.get("Reason", ""))
+        sha = str(row.get("Sha256", "")).lower()
+        if (reason == ALREADY_SECURED_REASON
+                or (reason == "Identical content already completed"
+                    and sha in unverified_hashes
+                    and sha not in verified_hashes)):
+            moved.append(row)
+        else:
+            kept.append(row)
+    known = {str(row.get("Fingerprint", "")).lower() for row in rows}
+    stamped = datetime.now(timezone.utc).isoformat()
+    for row in moved:
+        fp = str(row.get("Fingerprint", "")).strip()
+        if not fp or fp.lower() in known:
+            continue
+        known.add(fp.lower())
+        rows.append({"Fingerprint": fp, "Sha256": str(row.get("Sha256", "")),
+                     "RelativePath": str(row.get("RelativePath", "")),
+                     "Size": str(row.get("Size", "")), "BatchId": "", "StagedUtc": "",
+                     "BlockedUtc": stamped, "Reason": UNVERIFIED_REFUSAL_REASON})
+        changed = True
+    if changed:
+        save_blocked(rows, blocked_file)
+    if moved:
+        tmp = completed_file.with_suffix(completed_file.suffix + ".tmp")
+        with tmp.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=COMPLETED_FIELDS)
+            writer.writeheader()
+            writer.writerows(kept)
+        tmp.replace(completed_file)
+    if changed or moved:
+        write_log(f"{len(moved)} legacy refusal completions moved and "
+                  f"{converted_blocked} old refusal blocks relabeled as unverified; "
+                  "their archive copies remain.", "WARN")
+    return len(moved) + converted_blocked
 
 
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
@@ -387,7 +423,10 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
                 raise FileNotFoundError(f"Cannot resume batch handover; source missing: {src}")
             copy_to_batch(src, d, str(entry["StagedName"]))
             entry["State"] = "Staged"
-            entry["StagedUtc"] = now.isoformat()
+            # Preserve the first successful handover time: repair cycles must not
+            # extend the configured timeout. Copying rows have no such timestamp.
+            if not _valid_staged_time(str(entry.get("StagedUtc", ""))):
+                entry["StagedUtc"] = now.isoformat()
             entry.pop("MissingSinceUtc", None)
             changed = True
             write_log(f"Re-provided handover file: {entry.get('RelativePath')}", "OK")

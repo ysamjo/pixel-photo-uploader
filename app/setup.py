@@ -5,12 +5,14 @@ half-configured install behind.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import (APP_BATCH_FOLDER, MAX_BATCH_GIB, MAX_DEEP_RESCAN_DAYS, MAX_STABLE_SECONDS,
                MIN_BATCH_GIB, MIN_DEEP_RESCAN_DAYS)
 from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
                MIN_BACKUP_TIMEOUT_HOURS)
+from . import config_path
 from .config import DEFAULTS, _validate_roots, ensure_state_dir, save_config_atomic
 from .util import clamp, write_log
 
@@ -56,6 +58,15 @@ def apply_setup(values: dict) -> dict:
                       MIN_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS)
 
     cfg = dict(DEFAULTS)
+    existing = config_path()
+    if existing.exists():
+        try:
+            saved = json.loads(existing.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                raise ValueError("Existing config must be a JSON object.")
+            cfg.update(saved)
+        except (OSError, ValueError) as exc:
+            errors.append(f"Existing config could not be preserved: {exc}")
     cfg.update({
         "TransportMode": "App", "ConnectionMode": "App",
         "ImportEnabled": has_clouds and has_inbox,

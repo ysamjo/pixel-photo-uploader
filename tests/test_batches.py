@@ -272,9 +272,8 @@ def _refusal_receipt(cfg: dict, entries: list[dict]) -> None:
     }), encoding="utf-8")
 
 
-def test_absage_ist_drittes_urteil_bereits_gesichert(tmp_path, monkeypatch):
-    """„Nichts freizugeben“ nach bestätigter Sicherung heisst: Fotos besitzt den
-    Inhalt schon. Das ist ein Erfolg mit anderer Herkunft, kein Problemfall."""
+def test_absage_ist_unbestaetigt_und_wird_nicht_als_erfolg_gebucht(tmp_path, monkeypatch):
+    """„Nichts freizugeben“ beweist keinen Upload; die Archivkopie bleibt blockiert."""
     cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     before = {e["Fingerprint"]: e for e in staged}
@@ -284,20 +283,18 @@ def test_absage_ist_drittes_urteil_bereits_gesichert(tmp_path, monkeypatch):
 
     rest = store.load_staged(staged_file)
     assert [e["RelativePath"] for e in rest] == ["b.jpg"]
-    assert not blocked_file.exists()
-    rows = list(csv.DictReader(open(tmp_path / "state" / "completed.csv", newline="",
-                                    encoding="utf-8")))
+    rows = store.load_blocked(blocked_file)
     assert [r["RelativePath"] for r in rows] == ["a.jpg"]
-    assert rows[0]["Reason"] == batches.ALREADY_SECURED_REASON
+    assert rows[0]["Reason"] == batches.UNVERIFIED_REFUSAL_REASON
+    assert store.load_completion_sets(tmp_path / "state" / "completed.csv")[0] == set()
     d = batches.batch_dir(Path(cfg["StagingRoot"]), rest[0]["BatchId"])
     assert (d / before["fp-a.jpg"]["StagedName"]).is_file() is False
     manifest = json.loads((d / "_batch-manifest.json").read_text(encoding="utf-8"))
     assert manifest["fileCount"] == 1
 
 
-def test_alte_absagen_wandern_in_die_erfolgsledger(tmp_path, monkeypatch):
-    """Die 3.3.15 hat Absagen nach blocked.csv gelegt; dieselben Dateien sind jetzt
-    als gesichert verbucht. Zeitüberschreitungen bleiben Problemfälle."""
+def test_alte_absagen_bleiben_unbestaetigt(tmp_path, monkeypatch):
+    """Alte refusal rows werden eindeutig markiert; Timeout-Gründe bleiben erhalten."""
     cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
     blocked_file = tmp_path / "state" / "blocked.csv"
     completed_file = tmp_path / "state" / "completed.csv"
@@ -307,11 +304,73 @@ def test_alte_absagen_wandern_in_die_erfolgsledger(tmp_path, monkeypatch):
     store.append_blocked(entries[2:], "No receipt within 72 h", blocked_file)
 
     assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 2
-    assert [r["Fingerprint"] for r in store.load_blocked(blocked_file)] == ["fp-3"]
-    moved = list(csv.DictReader(open(completed_file, newline="", encoding="utf-8")))
-    assert [r["Fingerprint"] for r in moved] == ["fp-1", "fp-2"]
-    assert moved[0]["Reason"] == batches.ALREADY_SECURED_REASON
+    blocked = store.load_blocked(blocked_file)
+    assert [r["Fingerprint"] for r in blocked] == ["fp-1", "fp-2", "fp-3"]
+    assert [r["Reason"] for r in blocked[:2]] == [batches.UNVERIFIED_REFUSAL_REASON] * 2
+    assert blocked[2]["Reason"] == "No receipt within 72 h"
+    assert not completed_file.exists()
     assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 0
+
+
+def test_alte_unbestaetigte_erfolge_und_abgeleitete_duplikate_wandern_nach_blocked(tmp_path, monkeypatch):
+    _, _, _ = _state(tmp_path, monkeypatch)
+    blocked_file = tmp_path / "state" / "blocked.csv"
+    completed_file = tmp_path / "state" / "completed.csv"
+    rows = [
+        {"Fingerprint": "refused", "Sha256": "hash-unverified", "RelativePath": "a.jpg",
+         "Size": "10", "CompletedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": batches.ALREADY_SECURED_REASON},
+        {"Fingerprint": "derived-duplicate", "Sha256": "hash-unverified", "RelativePath": "b.jpg",
+         "Size": "10", "CompletedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "Identical content already completed"},
+        {"Fingerprint": "proven", "Sha256": "hash-proven", "RelativePath": "c.jpg",
+         "Size": "10", "CompletedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "Android receipt after confirmed Google Photos free-up"},
+    ]
+    with completed_file.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=store.COMPLETED_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    assert batches.migrate_refusal_blocks(blocked_file, completed_file) == 2
+    assert {r["Fingerprint"] for r in store.load_blocked(blocked_file)} == {
+        "refused", "derived-duplicate"}
+    kept = list(csv.DictReader(completed_file.open(newline="", encoding="utf-8")))
+    assert [r["Fingerprint"] for r in kept] == ["proven"]
+
+
+def test_copying_ohne_erstzeitpunkt_laeuft_nicht_sofort_ab_und_wird_repariert(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    for entry in staged:
+        entry["State"] = "Copying"
+        entry["StagedUtc"] = ""
+    store.save_staged(staged, staged_file)
+    now = datetime.now(timezone.utc) + timedelta(hours=80)
+
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now) == 0
+    assert not blocked_file.exists()
+
+    batches.repair_batches(cfg, staged_file)
+    repaired = store.load_staged(staged_file)
+    assert all(entry["State"] == "Staged" and entry["StagedUtc"] for entry in repaired)
+
+
+def test_restaging_setzt_urspruengliche_timeout_uhr_nicht_zurueck(tmp_path, monkeypatch):
+    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    first_time = "2026-01-01T00:00:00+00:00"
+    staged[0]["StagedUtc"] = first_time
+    staged[0]["MissingSinceUtc"] = (datetime.now(timezone.utc)
+                                    - timedelta(seconds=batches.REPAIR_GRACE_SECONDS + 1)).isoformat()
+    store.save_staged(staged, staged_file)
+    (batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
+     / staged[0]["StagedName"]).unlink()
+
+    batches.repair_batches(cfg, staged_file)
+    repaired = next(e for e in store.load_staged(staged_file) if e["Fingerprint"] == "fp-a.jpg")
+    assert repaired["StagedUtc"] == first_time
+    assert "MissingSinceUtc" not in repaired
 
 
 def test_wartende_dateien_belegen_hoechstens_eine_kappe(tmp_path, monkeypatch):

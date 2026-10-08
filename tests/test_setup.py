@@ -1,6 +1,6 @@
 """Setup ohne SSH: apply_setup ist ohne HTTP und ohne Browser prüfbar."""
 from app import config_path
-from app.config import load_config
+from app.config import load_config, save_config_atomic
 from app.setup import apply_setup
 
 
@@ -71,3 +71,23 @@ def test_groesse_und_stabilitaet_bleiben_im_erlaubten_band(tmp_path, monkeypatch
     assert cfg["BatchGiB"] == 10.0
     assert cfg["StableMinutes"] == 43200 / 60
     assert cfg["DeepRescanDays"] == 1
+
+
+def test_setup_erhaelt_nicht_sichtbare_config_werte(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path / "state"))
+    initial = apply_setup(_values(tmp_path))
+    assert initial["ok"], initial["errors"]
+    cfg = load_config()
+    cfg.update({"ReserveGiB": 3.25, "KeepAwake": False,
+                "RequireUnlocked": False, "RemoteRoot": "/custom/photos"})
+    save_config_atomic(cfg)
+
+    result = apply_setup(_values(tmp_path, BatchGiB="4"))
+
+    assert result["ok"], result["errors"]
+    saved = load_config()
+    assert saved["BatchGiB"] == 4.0
+    assert saved["ReserveGiB"] == 3.25
+    assert saved["KeepAwake"] is False
+    assert saved["RequireUnlocked"] is False
+    assert saved["RemoteRoot"] == "/custom/photos"
