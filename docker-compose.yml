@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.18
+    image: pixel-photo-uploader:3.3.19
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -42,7 +42,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.18
+    image: pixel-photo-uploader:3.3.19
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -82,11 +82,11 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.18"
-  update_at: "2026-10-07"
+  version: "3.3.19"
+  update_at: "2026-10-08"
   release_notes:
-    en_US: Refusals without proof are unverified; interrupted transfers no longer expire immediately; restaging preserves the original timeout; setup keeps hidden configuration values.
-    de_DE: Unbestätigte Absagen werden nicht als Upload-Erfolg gebucht; unterbrochene Transfers laufen nicht sofort ab; Reparaturen setzen die Übergabezeit nicht zurück; Setup erhält versteckte Konfigurationswerte.
+    en_US: Unverified refusals release Pixel storage immediately and enter a separate 24-hour retry ledger; retries are capped at 0.5 GiB per refill. Interrupted transfers and original timeout handling remain protected.
+    de_DE: Unbestätigte Absagen geben den Pixel-Speicher sofort frei und landen in einem separaten 24-Stunden-Retry-Ledger; Retries sind auf 0,5 GiB je Auffüllung begrenzt. Unterbrochene Transfers und ursprüngliche Timeout-Uhren bleiben geschützt.
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues
