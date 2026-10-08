@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_VERSION = "3.3.18"
+APP_VERSION = "3.3.19"
 APP_BATCH_FOLDER = "Batches"
 
 MIN_BATCH_GIB = 0.25
@@ -52,6 +52,10 @@ def staged_path() -> Path:
 
 def blocked_path() -> Path:
     return state_root() / "blocked.csv"
+
+
+def unverified_path() -> Path:
+    return state_root() / "unverified.csv"
 
 
 def lastscan_path() -> Path:
