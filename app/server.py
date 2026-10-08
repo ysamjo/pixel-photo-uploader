@@ -32,17 +32,19 @@ def _esc(value) -> str:
 def overview(cfg: dict) -> dict:
     """Status numbers without printing (shared by CLI and web)."""
     from .batches import backup_timeout_hours, batch_gib_clamped
-    from .store import (blocked_fingerprints, load_catalog, load_completion_sets,
-                        load_staged)
+    from .store import (blocked_fingerprints, due_unverified, load_catalog,
+                        load_completion_sets, load_staged, unverified_fingerprints)
     from .sync import deep_rescan_days
 
     catalog = load_catalog()
     fps, _ = load_completion_sets()
     blocked = blocked_fingerprints()
+    unverified = unverified_fingerprints()
     stable_open = [e for e in catalog
                    if str(e.get("Stable")) == "True"
                    and str(e.get("Fingerprint", "")).lower() not in fps
-                   and str(e.get("Fingerprint", "")).lower() not in blocked]
+                   and str(e.get("Fingerprint", "")).lower() not in blocked
+                   and str(e.get("Fingerprint", "")).lower() not in unverified]
     stable_seconds = int(float(cfg.get("StableMinutes", 2.0)) * 60)
     setup = {
         "DropboxRoot": str(cfg.get("DropboxRoot", "")),
@@ -73,6 +75,8 @@ def overview(cfg: dict) -> dict:
         "completed": len(fps),
         "staged": len(load_staged()),
         "blocked": len(blocked),
+        "unverified": len(unverified),
+        "unverified_due": len(due_unverified()),
         "open_stable": len(stable_open),
         "open_bytes": sum(int(e.get("Size", 0) or 0) for e in stable_open),
         "running": runner.holder(),
@@ -166,6 +170,8 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"<li><b>{_number(info.get('open_stable'))}</b>offen ({_gib(info.get('open_bytes'))})</li>"
             f"<li><b>{_number(info.get('staged'))}</b>auf dem Pixel</li>"
             f"<li><b>{_number(info.get('completed'))}</b>abgeschlossen</li>"
+            f"<li><b>{_number(info.get('unverified'))}</b>unbestätigt "
+            f"({_number(info.get('unverified_due'))} retry-bereit)</li>"
             f"<li><b>{_number(info.get('blocked'))}</b>blockiert</li>"
         )
         settings = (
