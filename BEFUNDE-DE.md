@@ -24,11 +24,15 @@ dieser Text keinen abgeschlossenen Upload für genau diese Dateien belegt.
 
 - Nur tatsächlich verschwundene überwachte Dateien nach der Freigabe erzeugen einen
   Erfolgsbeleg in `completed.csv`.
-- `refusedPaths` werden als unbestätigt nach `blocked.csv` verschoben. Die lokale
-  Archiv-Kopie bleibt erhalten und die Handreichung wird freigegeben.
+- `refusedPaths` werden als unbestätigt nach `unverified.csv` verschoben. Die lokale
+  Archiv-Kopie bleibt erhalten und die Handreichung wird sofort freigegeben.
 - Alte `completed.csv`-Zeilen mit dem Grund
   `Google Photos already holds this content (nothing to free up)` sowie direkt daraus
-  abgeleitete SHA-256-Duplikatbuchungen werden in `blocked.csv` migriert.
+  abgeleitete SHA-256-Duplikatbuchungen werden nach `unverified.csv` migriert. Alte
+  Refusal-Einträge aus `blocked.csv` werden ebenfalls dorthin verschoben.
+- `unverified.csv` belegt keinen Pixel-Speicher. Frühestens nach 24 h werden fällige
+  Einträge in kleinen Verifikationspaketen erneut angeboten; pro Auffüllung sind dafür
+  höchstens 0,5 GiB vorgesehen.
 - `backup paused`, Netzwerk-Wartezustände und Offline-Hinweise führen zunächst über
   den 30-Minuten-Stillstandsmechanismus statt unmittelbar in den terminalen Fehler.
 - Ein unterbrochener `Copying`-Transfer kann nicht wegen leerem `StagedUtc` sofort
@@ -85,7 +89,7 @@ um 17:51:44 erneut, 98 s nach dem Zurücksetzen. Siehe §6, §7 und §9 Punkt 5.
 | Urteil | Auslöser auf dem Telefon | Buchung |
 |---|---|---|
 | **Freigegeben** | Google Fotos entfernt die Datei wirklich, App vergleicht den Dateibestand | `completed.csv`, Grund „Android receipt after confirmed Google Photos free-up" |
-| **Nicht freigegeben / unbestätigt** | zweimal in Folge „Nichts freizugeben" | `blocked.csv`, eigener Grund; Handreichung freigeben, Archiv-Kopie bleibt |
+| **Nicht freigegeben / unbestätigt** | zweimal in Folge „Nichts freizugeben" | `unverified.csv`; Handreichung sofort freigeben, Archiv-Kopie bleibt, Retry frühestens nach 24 h |
 | **Kein Beleg** | nach `BackupTimeoutHours` = 72 h nichts eingetroffen | `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt |
 
 Vierte Buchung, ohne Google-Fotos-Urteil: beim Einreihen vergleicht der Server die
@@ -351,7 +355,7 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
    /DATA/AppData/pixel-photo-uploader/pixelsync` — 1,19 GB Alt-Kopie außerhalb von
    Resilios Sync-Wurzel — und die Compose-Kopien auf der NAS nachziehen: sie driften
    vom Repo, deployt wird deshalb aus `/tmp`.
-5. **Task 6 — umgesetzt in 3.3.18 / Companion 1.2.5.** Der Betriebsfall ist
+5. **Task 6 — umgesetzt in 3.3.19 / Companion 1.2.6.** Der Betriebsfall ist
    wiederholt und gemessen (§6: 17:29:22, dann nach Zurücksetzen 17:51:44 erneut, Rate
    danach 1,32 / 0,00 / 0,11 MiB/min). Die Leitungsfolge: **ohne Fix ist der Betrieb nicht
    mehr unbeaufsichtigt.** Irgendwann steht die Automatik in `PHASE_ERROR`, und nur ein
