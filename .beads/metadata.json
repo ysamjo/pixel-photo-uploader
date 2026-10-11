@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "pixel_photo_uploader",
+  "project_id": "3dc463ac-3dcd-47e3-b3a0-ec21c8def4be"
+}
