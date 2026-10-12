@@ -25,6 +25,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n de.pixelphotouploader.companion/.MainActivity
 ```
 
+## ADB-Wächter ab 1.2.8
+
+- `photosRemaining` / `photosRemainingAt` enthalten nur den erkannten Restzähler, keine Scan-/CPU-Aktivität. Der externe ADB-Wächter misst zusätzlich Google-Fotos-Sendebytes.
+- Der Wächter schreibt atomar `files/photos-watchdog-status.json`; frische Warnungen werden in Status und Vordergrundbenachrichtigung angezeigt. Die App selbst darf Google Fotos nicht force-stoppen.
+- Kein Geräteneustart ohne ausdrückliche Freigabe; das Pixel braucht spezielle Kabel/Stromversorgung.
+
 ## Automatische Erholung
 
 - Beim Öffnen der App startet eine zuvor aktive, bestätigte Überwachung sofort wieder; bewusst pausierte Überwachung bleibt pausiert.

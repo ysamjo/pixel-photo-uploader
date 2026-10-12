@@ -120,6 +120,11 @@ public class PhotosAccessibilityService extends AccessibilityService {
         List<NodeText> nodes = new ArrayList<>();
         collect(root, nodes);
         String all = allText(nodes);
+        int remaining = ProgressText.remaining(all);
+        if (remaining >= 0) {
+            prefs.edit().putInt("photosRemaining", remaining)
+                    .putLong("photosRemainingAt", System.currentTimeMillis()).apply();
+        }
 
         String errorHit = firstMatch(all,
                 "sicherung ist deaktiviert", "sicherung deaktiviert", "sicherung aus", "sicherung ausgeschaltet",

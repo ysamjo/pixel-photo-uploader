@@ -21,6 +21,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 - Companion 1.2.7 setzt vorübergehende Fehler automatisch nach 5/15/30 Minuten zurück; der laufende Batch und seine Timeout-Uhr bleiben erhalten. Fehlende Voraussetzungen und 72-h-Timeout benötigen weiterhin einen Eingriff.
 
+- Optionaler ADB-Wächter: `app.photos_watchdog`, Mac-Hintergrunddienst `scripts/install-photos-watchdog-macos.py`. Ein Google-Fotos-Neustart pro Batch nach 30 Minuten ohne Fortschritt; danach Wartezeit und sichtbare Warnung. **Niemals das Pixel rebooten ohne ausdrückliche Freigabe:** Kabel/Stromversorgung und WLAN-ADB sind speziell. Liveprüfung benötigt ADB zum Pixel 1; siehe `PHOTOS-WATCHDOG-DE.md`.
+
 ## Konventionen
 
 - Python-Quelltext auf Deutsch / Englisch: Docstrings und Kommentare mit ASCII-Umlauten (`ueber`, `fuer`), nutzersichtbare Texte im Web-UI und README mit echten Umlauten.

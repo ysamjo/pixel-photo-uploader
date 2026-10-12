@@ -1,4 +1,4 @@
-# Pixel Photo Companion 1.2.7
+# Pixel Photo Companion 1.2.8
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
 
@@ -22,6 +22,10 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - schreibt einen atomaren JSON-Rückbeleg in den Resilio-Kontrollordner, auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist;
 - spiegelt ihr Protokoll zusätzlich nach `<Kontrollordner>/companion-log.txt`, damit der Server im Web-UI unter „Pixel meldet" zeigt, worauf die Automatik wartet — ohne Kabel;
 - läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war; auch nach einem App-Update weckt die Bedienungshilfe die Überwachung selbst.
+
+## Fortschrittswächter ab 1.2.8
+
+Die App stellt den verbleibenden Dateizähler für einen externen ADB-Wächter bereit und zeigt dessen Warnungen in der App und Benachrichtigung. Der Wächter kann nach 30 Minuten ohne Fortschritt ausschließlich Google Fotos einmal pro Batch neu starten. Danach folgen bei erneutem Stillstand eine Stunde Wartezeit und eine Warnung. Die App selbst erhält keine neuen Berechtigungen. Einrichtung: [PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md). Version 1.2.8 ist gebaut und getestet, aber noch nicht auf dem Pixel installiert.
 
 ## Automatische Erholung ab 1.2.7
 

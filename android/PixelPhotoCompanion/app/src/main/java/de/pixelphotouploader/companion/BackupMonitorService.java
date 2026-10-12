@@ -359,6 +359,20 @@ public class BackupMonitorService extends Service {
     }
 
     private void update(String text) {
+        // Der ADB-Waechter besitzt das Prozess-Neustartrecht; die App zeigt seine Warnung.
+        File watchdog = new File(getFilesDir(), "photos-watchdog-status.json");
+        if (watchdog.isFile()) {
+            try {
+                String raw = new String(java.nio.file.Files.readAllBytes(watchdog.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                org.json.JSONObject status = new org.json.JSONObject(raw);
+                double age = System.currentTimeMillis() / 1000.0 - status.optDouble("observedAt", 0);
+                String state = status.optString("state");
+                if (age >= 0 && age <= 150 && ("alert".equals(state) || "cooldown".equals(state))) {
+                    text = status.optString("message", text);
+                }
+            } catch (Exception ignored) { }
+        }
         AppState.prefs(this).edit().putString("serviceStatus", text).putLong("updatedAt", System.currentTimeMillis()).apply();
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) manager.notify(NOTIFICATION_ID, notification(text));
