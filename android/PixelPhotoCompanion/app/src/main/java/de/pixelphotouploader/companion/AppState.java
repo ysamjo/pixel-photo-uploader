@@ -41,12 +41,21 @@ final class AppState {
     }
 
     static void phase(Context context, String phase, String detail) {
-        prefs(context).edit()
+        SharedPreferences prefs = prefs(context);
+        SharedPreferences.Editor edit = prefs.edit()
                 .putString("phase", phase)
                 .putString("detail", detail)
                 .putLong("updatedAt", System.currentTimeMillis())
-                .remove("stuckSince")
-                .apply();
+                .remove("stuckSince");
+        if (PHASE_ERROR.equals(phase)) {
+            // Gleicher Fehler bei einem Beleg-Retry darf die Frist nicht immer nach hinten schieben.
+            if (!PHASE_ERROR.equals(prefs.getString("phase", ""))
+                    || !detail.equals(prefs.getString("detail", ""))) {
+                edit.putLong("errorRetryAt", System.currentTimeMillis()
+                        + RecoveryPolicy.delayMillis(prefs.getInt("recoveryAttempts", 0)));
+            }
+        } else edit.remove("errorRetryAt");
+        edit.apply();
         log(context, detail);
     }
 

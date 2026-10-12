@@ -37,6 +37,10 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
 **[BEFUNDE-DE.md](BEFUNDE-DE.md)** — Sync-Verhalten, gemessen am Stand 2026-10-07.
 
+## Unbeaufsichtigter Betrieb auf dem Pixel
+
+Companion 1.2.7 erholt sich automatisch von vorübergehenden Fehlern (Wiederholung nach 5/15/30 Minuten), ohne den laufenden Batch neu zu scannen oder dessen 72-Stunden-Frist zu verlängern. Deaktivierte Sicherung, voller Kontospeicher, fehlendes Google Fotos und das 72-Stunden-Limit erfordern einen Eingriff. Das Pixel bleibt entsperrt am Ladegerät; Companion, Google Fotos und Resilio sollten von der Akkuoptimierung ausgenommen sein. Details und Android-Prüfbefehle stehen in [android/PixelPhotoCompanion/README-DE.md](android/PixelPhotoCompanion/README-DE.md).
+
 ## Paketinhalt
 
 ```

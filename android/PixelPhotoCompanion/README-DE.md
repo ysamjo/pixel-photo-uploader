@@ -1,4 +1,4 @@
-# Pixel Photo Companion 1.2.4
+# Pixel Photo Companion 1.2.7
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
 
@@ -12,7 +12,7 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - meldet fertige Dateien beim Android-Medienscanner an;
 - öffnet Google Fotos und liest den sichtbaren Sicherungsstatus über einen Bedienungshilfedienst;
 - verlangt zweimal „Sicherung abgeschlossen“ mit mindestens 45 Sekunden Abstand;
-- stoppt bei Sicherungsfehlern, gesperrtem Pixel oder unbekannter Google-Fotos-Oberfläche;
+- wiederholt vorübergehende Sicherungs-, Bedienungs- und Schreibfehler automatisch nach 5, 15 und anschließend höchstens 30 Minuten; ein gesperrtes Pixel wartet auf Entsperrung;
 - öffnet Google Fotos selbst, wenn ein Schritt die Oberfläche braucht (der Bildschirm muss dabei an und entsperrt sein);
 - öffnet ausschließlich ein eindeutig erkanntes „Speicherplatz freigeben” und dessen Bestätigungsdialog;
 - akzeptiert im Bestätigungsdialog nur eine kurze Knopfbeschriftung mit Mengen- oder Zahlenangabe, die nicht „Abbrechen“ oder „Später“ heißt, kein Fragezeichen enthält und deren Element tatsächlich klickbar ist; die Knöpfe der installierten Google-Fotos-Fassung heißen „Vom Gerät löschen“ (auch mit Zähler), zusätzlich werden „… freigeben“, „… entfernen“ und die englischen Texte erkannt;
@@ -22,6 +22,16 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - schreibt einen atomaren JSON-Rückbeleg in den Resilio-Kontrollordner, auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist;
 - spiegelt ihr Protokoll zusätzlich nach `<Kontrollordner>/companion-log.txt`, damit der Server im Web-UI unter „Pixel meldet" zeigt, worauf die Automatik wartet — ohne Kabel;
 - läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war; auch nach einem App-Update weckt die Bedienungshilfe die Überwachung selbst.
+
+## Automatische Erholung ab 1.2.7
+
+Vorübergehende Fehler halten den Betrieb nicht mehr dauerhaft an. Die Wiederholung bleibt über einen App-Neustart erhalten. Beim Öffnen der App startet die zuvor aktive Überwachung nach einem Update sofort wieder; bewusstes Pausieren wird respektiert. Ein vorhandener Batch wird ohne erneuten MediaScan und mit seinem ursprünglichen 72-Stunden-Beginn weiter geprüft. Vor einer Freigabe muss Google Fotos die Sicherung erneut zweimal bestätigen. Absage-Marken und noch nicht geschriebene Rückbelege bleiben erhalten. Beobachtete Sicherungsaktivität setzt die Wartezeit zurück.
+
+Fehlende Google-Fotos-Installation, deaktivierte Sicherung, voller Kontospeicher und das 72-Stunden-Limit benötigen weiterhin einen Eingriff; ein Reset könnte ihre Ursache nicht beheben. „backup paused“ und Netzwerk-Wartezustände gelten bereits seit 1.2.6 als vorübergehend. Nach 30 Minuten ohne erkannten Fortschritt erfolgt jetzt ein automatischer Wiederanlauf.
+
+Für den Dauerbetrieb: Pixel entsperrt am Ladegerät lassen, „Bildschirm nicht ausschalten“ aktivieren und Companion, Google Fotos sowie Resilio von der Akkuoptimierung ausnehmen. Batchgröße bei 5 GiB belassen; eine Vergrößerung erfordert zuerst eine neue Messung des freien Telefonspeichers. WLAN-ADB unter Android 10 verwendet `adb tcpip 5555` und danach `adb connect <Pixel-IP>:5555`; nach einem Neustart kann die USB-Aktivierung erneut nötig sein.
+
+Prüfen und bauen: `./gradlew testDebugUnitTest assembleDebug lintDebug`.
 
 ## Wichtige Sicherheitsgrenze
 

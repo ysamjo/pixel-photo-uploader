@@ -206,7 +206,8 @@ public class PhotosAccessibilityService extends AccessibilityService {
 
         if (containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
             clearStuck(prefs);
-            prefs.edit().putBoolean("sawActiveBackup", true).putInt("completeStreak", 0).apply();
+            prefs.edit().putBoolean("sawActiveBackup", true).putInt("completeStreak", 0)
+                    .putInt("recoveryAttempts", 0).apply();
             return;
         }
 
@@ -214,8 +215,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
         // 72-Stunden-Limit nur das Profil an/aus, ohne je Bildschirmtexte zu melden.
         // Nach der Karenz zählt Stillstand als Befund — mit den gelesenen Texten im Fehler.
         long started = prefs.getLong("batchStartedAt", System.currentTimeMillis());
-        if (!prefs.getBoolean("sawActiveBackup", false)
-                && System.currentTimeMillis() - started >= GRACE_MILLIS) {
+        if (System.currentTimeMillis() - started >= GRACE_MILLIS) {
             noteStuck(prefs, nodes, "weder Sicherungsaktivität noch Sicherungsabschluss");
         }
 

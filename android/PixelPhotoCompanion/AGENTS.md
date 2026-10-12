@@ -16,7 +16,7 @@ Android-Begleit-App (Android 10 / API 29) für das Google Pixel der 1. Generatio
 
 ```bash
 # Debug-APK bauen
-./gradlew assembleDebug
+./gradlew testDebugUnitTest assembleDebug lintDebug
 
 # Auf Pixel 1 via ADB installieren
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -24,6 +24,13 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 # App starten
 adb shell am start -n de.pixelphotouploader.companion/.MainActivity
 ```
+
+## Automatische Erholung
+
+- Beim Öffnen der App startet eine zuvor aktive, bestätigte Überwachung sofort wieder; bewusst pausierte Überwachung bleibt pausiert.
+- Seit Companion 1.2.7 werden vorübergehende Fehler nach 5/15/30 Minuten automatisch zurückgesetzt. `RecoveryPolicy` klassifiziert die Fehler und begrenzt die Wartezeit; die Frist liegt persistent in `errorRetryAt`.
+- Ein Wiederanlauf mit laufendem Batch geht nach `WAIT_BACKUP`, setzt nur Abschluss- und Navigationszähler zurück und erhält `batchPaths`, `batchStartedAt`, Absage-Marken und ausstehende Rückbelege. Kein MediaScan beim Wiederanlauf.
+- Deaktivierte Sicherung, fehlendes Google Fotos, voller Kontospeicher und 72-h-Timeout bleiben Eingriffsfälle. Eine bewusst pausierte Überwachung wird niemals automatisch aktiviert.
 
 ## Fallstricke
 

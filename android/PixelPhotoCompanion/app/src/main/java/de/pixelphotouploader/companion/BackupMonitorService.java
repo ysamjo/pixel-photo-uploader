@@ -99,6 +99,13 @@ public class BackupMonitorService extends Service {
         AppState.forgetRefusedGone(this, stillPresent);
         prefs.edit().putInt("visibleFiles", stable.paths.size()).putLong("visibleBytes", stable.bytes).apply();
 
+        if (AppState.PHASE_ERROR.equals(phase)) {
+            if (!RecoveryPolicy.retryable(prefs.getString("detail", ""))
+                    && healReceiptFromDisk(prefs, phase)) return;
+            if (!recoverError(prefs)) return;
+            phase = AppState.phase(this);
+        }
+
         if (!prefs.getString("pendingReceiptPaths", "").trim().isEmpty()) {
             flushPendingReceipt();
             return;
@@ -113,10 +120,6 @@ public class BackupMonitorService extends Service {
             long verifyAfter = prefs.getLong("verifyAfter", Long.MAX_VALUE);
             if (System.currentTimeMillis() >= verifyAfter) verifyCleanup();
             else update("Google Fotos gibt lokalen Speicher frei …");
-            return;
-        }
-        if (AppState.PHASE_ERROR.equals(phase)) {
-            update("Angehalten: App öffnen");
             return;
         }
         if (!AppState.PHASE_MONITORING.equals(phase)) {
@@ -165,6 +168,38 @@ public class BackupMonitorService extends Service {
         update("Google Fotos sichert den aktuellen Batch");
     }
 
+    private boolean recoverError(SharedPreferences prefs) {
+        String detail = prefs.getString("detail", "");
+        if (!RecoveryPolicy.retryable(detail)) {
+            update("Eingriff nötig: " + detail);
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        long retryAt = prefs.getLong("errorRetryAt", 0L);
+        if (retryAt == 0L) {
+            // Auch Fehler einer alten App-Version werden nach dem Update automatisch aufgenommen.
+            retryAt = now + RecoveryPolicy.delayMillis(prefs.getInt("recoveryAttempts", 0));
+            prefs.edit().putLong("errorRetryAt", retryAt).apply();
+            AppState.log(this, "Vorübergehender Fehler: automatische Wiederholung eingeplant.");
+        }
+        if (now < retryAt) {
+            update("Automatische Wiederholung in " + ((retryAt - now + 59_999L) / 60_000L) + " Minuten");
+            return false;
+        }
+        if (!accessibilityEnabled()) { update("Bedienungshilfe fehlt – App öffnen"); return false; }
+        KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        if (km != null && km.isKeyguardLocked()) { update("Pixel gesperrt – bitte einmal entsperren"); return false; }
+        boolean hasBatch = !prefs.getString("batchPaths", "").trim().isEmpty();
+        prefs.edit().putInt("recoveryAttempts", Math.min(2, prefs.getInt("recoveryAttempts", 0) + 1))
+                .putInt("completeStreak", 0).putLong("lastCompleteAt", 0L)
+                .putInt("freeUpRound", 0).putLong("nextAttemptAt", 0L).apply();
+        // Batch, Absage-Marken und 72-h-Beginn bleiben erhalten; kein erneuter MediaScan.
+        AppState.phase(this, RecoveryPolicy.resumePhase(hasBatch),
+                "Vorübergehenden Fehler automatisch zurückgesetzt; Sicherung wird erneut geprüft.");
+        if (hasBatch) openGooglePhotos();
+        return !AppState.PHASE_ERROR.equals(AppState.phase(this));
+    }
+
     private void verifyCleanup() {
         SharedPreferences prefs = AppState.prefs(this);
         List<String> before = split(prefs.getString("batchPaths", ""));
@@ -193,6 +228,7 @@ public class BackupMonitorService extends Service {
     }
 
     private boolean healReceiptFromDisk(SharedPreferences prefs, String phase) {
+        String previousError = prefs.getString("detail", "");
         // Nach einer Freigabe entscheidet allein der Dateibestand: fehlt die Datei, war sie
         // weg — auch wenn die App den Knopf nicht selbst gedrückt hat oder vorher in einem
         // Fehlerzustand hängen geblieben ist. VERIFY rechnet selbst ab, bleibt also außen vor.
@@ -224,10 +260,10 @@ public class BackupMonitorService extends Service {
                 .apply();
         AppState.log(this, gone.size() + " freigegebene Dateien aus dem Dateibestand nachgebucht.");
         flushPendingReceipt();
-        if (AppState.PHASE_ERROR.equals(phase)) {
-            AppState.phase(this, AppState.PHASE_ERROR,
-                    "Rückbeleg für " + gone.size() + " freigegebene Dateien geschrieben. Die Automatik bleibt "
-                            + "angehalten; erst „Fehler zurücksetzen“ lässt sie weiterlaufen.");
+        if (AppState.PHASE_ERROR.equals(phase) && !RecoveryPolicy.retryable(previousError)
+                && AppState.PHASE_MONITORING.equals(AppState.phase(this))) {
+            // Ein erfolgreicher Beleg repariert keinen fehlenden Account oder vollen Kontospeicher.
+            AppState.phase(this, AppState.PHASE_ERROR, previousError);
         }
         return true;
     }

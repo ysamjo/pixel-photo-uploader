@@ -10,8 +10,8 @@ android {
         applicationId 'de.pixelphotouploader.companion'
         minSdk 26
         targetSdk 28
-        versionCode 11
-        versionName '1.2.6'
+        versionCode 12
+        versionName '1.2.7'
     }
 
     buildTypes {
@@ -25,4 +25,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    lint {
+        // Dediziertes Android-10-Geraet, nur Sideload: klassische Dateiberechtigung ist Absicht.
+        // Die Google-Play-Veroeffentlichungsregel gilt fuer diese App nicht.
+        disable 'ExpiredTargetSdkVersion'
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
 }

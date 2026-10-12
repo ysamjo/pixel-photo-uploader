@@ -43,6 +43,11 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        // Nach einem Update startet Oeffnen der App die zuvor aktive Ueberwachung sofort.
+        SharedPreferences prefs = AppState.prefs(this);
+        if (prefs.getBoolean("enabled", false) && prefs.getBoolean("safetyAccepted", false)) {
+            BackupMonitorService.start(this);
+        }
     }
 
     private void buildUi() {
@@ -163,6 +168,7 @@ public class MainActivity extends Activity {
             // Beide Versuchs-Zähler mit löschen: sonst meldet die Automatik nach dem Zurücksetzen
             // sofort wieder Fehler, weil die alten Versuche noch in den Prefs stehen.
             prefs.edit().putString("phase", AppState.PHASE_MONITORING).putString("detail", "Fehler zurückgesetzt.")
+                    .remove("errorRetryAt").remove("stuckSince").putInt("recoveryAttempts", 0)
                     .putInt("completeStreak", 0).putInt("freeUpRound", 0)
                     .putInt("nothingToFreeRounds", 0).putLong("nextAttemptAt", 0L).apply();
             AppState.log(this, "Fehlerzustand manuell zurückgesetzt.");

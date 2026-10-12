@@ -19,6 +19,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
   erst ab (`confirm_staged`/`settle_refused`) und füllt danach auf.
 - Läuft 24/7 als ZimaOS-Container mit integriertem Web-UI und Hintergrund-Watcher.
 
+- Companion 1.2.7 setzt vorübergehende Fehler automatisch nach 5/15/30 Minuten zurück; der laufende Batch und seine Timeout-Uhr bleiben erhalten. Fehlende Voraussetzungen und 72-h-Timeout benötigen weiterhin einen Eingriff.
+
 ## Konventionen
 
 - Python-Quelltext auf Deutsch / Englisch: Docstrings und Kommentare mit ASCII-Umlauten (`ueber`, `fuer`), nutzersichtbare Texte im Web-UI und README mit echten Umlauten.
@@ -34,7 +36,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 ## Commands
 
 ```bash
-.venv/bin/pytest                     # kein Netzwerk nötig
+.venv/bin/python -m pytest           # kein Netzwerk nötig
 docker build -t pixel-photo-uploader:3.3.19 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
