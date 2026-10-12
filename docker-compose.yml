@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.19
+    image: pixel-photo-uploader:3.3.20
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -42,7 +42,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.19
+    image: pixel-photo-uploader:3.3.20
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -60,6 +60,16 @@ services:
       # Batches ab, die der Watcher nie katalogisiert hat (oder umgekehrt).
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
+  photos-watchdog:
+    image: pixel-photo-uploader:3.3.20
+    restart: unless-stopped
+    command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      - /DATA/AppData/pixel-photo-uploader/watchdog-adb:/home/ppu/.android
+
 x-casaos:
   id: io.github.ysamjo.pixel-photo-uploader
   main: server
@@ -74,19 +84,19 @@ x-casaos:
     en_US: Sort photo archive and hand batches to a Pixel phone for Google Photos upload
     de_DE: Foto-Archiv sortieren und per Pixel-App nach Google Fotos übergeben
   description:
-    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, no ADB, no USB cable). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
-    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, kein ADB, kein USB-Kabel). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
+    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, optional ADB watchdog). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
+    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, optionaler ADB-Wächter). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
   author: family
   developer: family
   category: Media
   architectures:
     - amd64
     - arm64
-  version: "3.3.19"
-  update_at: "2026-10-08"
+  version: "3.3.20"
+  update_at: "2026-10-12"
   release_notes:
-    en_US: Unverified refusals release Pixel storage immediately and enter a separate 24-hour retry ledger; retries are capped at 0.5 GiB per refill. Interrupted transfers and original timeout handling remain protected.
-    de_DE: Unbestätigte Absagen geben den Pixel-Speicher sofort frei und landen in einem separaten 24-Stunden-Retry-Ledger; Retries sind auf 0,5 GiB je Auffüllung begrenzt. Unterbrochene Transfers und ursprüngliche Timeout-Uhren bleiben geschützt.
+    en_US: Includes an independent Google Photos watchdog with ADB, one app restart per stalled batch, persistent recovery limits and web status. No device reboots.
+    de_DE: "Integrierter Google-Fotos-Wächter mit ADB: höchstens ein App-Neustart pro festhängendem Batch, persistente Grenzen und Web-Status. Keine Geräteneustarts."
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues

@@ -161,3 +161,18 @@ def test_lokale_compose_datei_hat_build(compose):
     lokal = _load(COMPOSE_LOCAL)
     for dienst_name, dienst in lokal.get("services", {}).items():
         assert "build" in dienst, f"Lokaler Dienst {dienst_name} sollte build: haben"
+
+
+def test_watchdog_hat_eigenen_prozess_ohne_root_und_ohne_host_adb_port(compose, dockerfile):
+    watchdog = compose['services']['photos-watchdog']
+    assert watchdog['image'] == compose['services']['watcher']['image']
+    assert watchdog['command'][:3] == ['python', '-m', 'app.photos_watchdog']
+    assert '--allow-restart' in watchdog['command']
+    assert 'privileged' not in watchdog and 'ports' not in watchdog
+    assert 'USER 1000:1000' in dockerfile
+    assert 'install -y --no-install-recommends adb' in dockerfile
+    assert '/DATA/AppData/pixel-photo-uploader/watchdog-adb:/home/ppu/.android' in watchdog['volumes']
+
+
+def test_katalog_compose_entspricht_der_massgeblichen_app_definition():
+    assert _load(ROOT / 'zimaos/Apps/PixelPhotoUploader/docker-compose.yml') == _load(COMPOSE)

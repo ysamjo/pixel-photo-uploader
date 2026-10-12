@@ -7,6 +7,8 @@ watcher process is the one that runs the cycle (see runner.py).
 from __future__ import annotations
 
 import html
+import json
+import time
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -82,7 +84,22 @@ def overview(cfg: dict) -> dict:
         "running": runner.holder(),
         "pending": runner.pending_request(),
         "setup": setup,
+        "photos_watchdog": watchdog_status(),
     }
+
+
+def watchdog_status() -> dict:
+    from . import state_root
+    path = state_root() / "photos-watchdog" / "photos-watchdog-status.json"
+    try:
+        status = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(status, dict):
+            raise ValueError("Invalid watchdog status")
+        if time.time() - float(status.get("observedAt", 0)) > 150:
+            return {"state": "stale", "message": "Der Wächter hat seit mehr als 150 Sekunden keine Meldung geliefert."}
+        return {k: status[k] for k in ("state", "message", "observedAt", "remaining", "cooldownUntil") if k in status}
+    except (OSError, ValueError, TypeError):
+        return {"state": "unavailable", "message": "Google-Fotos-Wächter noch nicht verbunden."}
 
 
 def _gib(value) -> str:
@@ -231,6 +248,9 @@ def render_page(info: dict, log_lines=(), message: str = "",
              if info.get("configured") and companion_lines else "")
     pixel_section = (f"<h2>Pixel meldet</h2><section><pre>{_esc(pixel)}</pre></section>"
                      if pixel else "")
+    watchdog = info.get("photos_watchdog") or {}
+    watchdog_section = (f'<h2>Google-Fotos-Wächter</h2><section><p>{_esc(watchdog.get("message"))}</p></section>'
+                        if watchdog else "")
     return (
         "<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\">"
         f"<title>Pixel Photo Uploader</title>{refresh}"
@@ -239,7 +259,7 @@ def render_page(info: dict, log_lines=(), message: str = "",
         f"<p class=\"sub\">v{_esc(info.get('version'))} &middot; App + Resilio "
         f"&middot; <span class=\"pill {css}\">{_esc(state)}</span></p>"
         f"{note}{status_section}{actions}{setup}"
-        f"{pixel_section}"
+        f"{watchdog_section}{pixel_section}"
         "<h2>Letzte Meldungen</h2><section>"
         f"<pre>{_esc(log)}</pre></section>"
         "</body></html>"
@@ -329,6 +349,10 @@ def create_app() -> "FastAPI":
                     "hint": "Noch nicht eingerichtet: Seite oeffnen und Einrichtung ausfuellen."}
         except ValueError as exc:
             return {"version": APP_VERSION, "configured": False, "hint": str(exc)}
+
+    @app.get("/api/photos-watchdog")
+    def api_watchdog() -> dict:
+        return watchdog_status()
 
     @app.get("/api/log", response_class=PlainTextResponse)
     def api_log(lines: int = 200) -> str:

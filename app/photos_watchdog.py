@@ -219,12 +219,6 @@ def cycle(adb: Adb, state_path: Path, allow_restart: bool, now: float | None = N
     return status
 
 
-def notify_macos(message: str) -> None:
-    script = 'on run argv\n display notification (item 1 of argv) with title "Pixel-Fotos-Wächter"\nend run'
-    subprocess.run(["osascript", "-", message], input=script, text=True,
-                   capture_output=True, timeout=10, check=False)
-
-
 def main(argv: list[str] | None = None) -> None:
     from . import state_root
     parser = argparse.ArgumentParser(description="Google-Fotos-Wächter; niemals Geräteneustarts")
@@ -233,7 +227,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--state-dir", type=Path, default=state_root() / "photos-watchdog")
     parser.add_argument("--allow-restart", action="store_true", help="Ein Google-Fotos-Neustart pro Batch erlaubt")
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--notify-macos", action="store_true", help="Lokale Mac-Mitteilung bei Ausfall")
     args = parser.parse_args(argv)
     args.state_dir.mkdir(parents=True, exist_ok=True)
     # Mac und NAS: nur eine Instanz darf das persistente Neustartbudget verwalten.
@@ -241,15 +234,8 @@ def main(argv: list[str] | None = None) -> None:
     with (args.state_dir / "watchdog.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         adb = Adb(args.adb, args.device)
-        previous = None
         while True:
             status = cycle(adb, args.state_dir / "photos-watchdog.json", args.allow_restart)
-            if args.notify_macos and status["state"] in {"alert", "offline"} and status["state"] != previous:
-                try:
-                    notify_macos(status["message"])
-                except (OSError, subprocess.SubprocessError):
-                    pass  # Status und Log bleiben unabhaengig von Mitteilungsrechten sichtbar.
-            previous = status["state"]
             if args.once:
                 break
             time.sleep(60)

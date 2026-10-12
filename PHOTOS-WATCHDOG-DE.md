@@ -1,93 +1,67 @@
-# Google-Fotos-Aussetzer: Mac-Wächter
+# Google-Fotos-Aussetzer: integrierter Docker-Wächter
 
-Der Nutzer hat den Mac als Ausführungsort gewählt. Der Wächter läuft als
-Benutzer-Hintergrunddienst, solange dieser Mac läuft. ADB muss mit dem Pixel 1
-verbunden und autorisiert sein. Offline wird gemeldet, niemals durch Eingriffe behoben.
+Ab Uploader 3.3.20 enthält dasselbe Docker-Image auch ADB und den Google-Fotos-Wächter.
+Compose startet ihn als eigenständigen Dienst `photos-watchdog`, damit ADB-Wartezeiten
+weder Fotoimport noch Web-UI blockieren. Der Mac-Dienst und sein Installer sind entfernt.
 
 ## Die drei Regeln
 
 1. Alle 60 Sekunden misst der Wächter die WLAN-Sendebytes **der Google-Fotos-UID**.
    Resilio-Verkehr, Scan-Text und CPU-Auslastung zählen nicht. Companion 1.2.8 ergänzt
-   den erkannten Restzähler (Deutsch/Englisch, maximal 120 Sekunden alt). Fortschritt:
-   mindestens 8 MiB kumulierter Google-Fotos-Sendeverkehr oder ein sinkender Restzähler.
-   Kleine Kontrollanfragen allein verhindern keinen Wiederanlauf. Sendebytes zeigen
+   den erkannten Restzähler (maximal 120 Sekunden alt). Fortschritt: mindestens 8 MiB
+   kumulierter Google-Fotos-Sendeverkehr oder ein sinkender Restzähler. Sendebytes zeigen
    Aktivität, sind aber kein Beleg für erfolgreich gesicherte Dateien.
 2. Nach 30 Minuten ohne solchen Fortschritt beendet der Wächter **nur Google Fotos**
    und öffnet es einmal neu. Das Budget gilt pro Batch und überlebt Prozessneustarts.
    Batchdateien, Rückbelege, MediaStore und Timeout-Beginn bleiben erhalten.
 3. Bei weiteren 30 Minuten Stillstand beginnt eine Stunde Wartezeit. Fortschritt hebt
-   diese Warnung auf, gibt aber keinen zweiten Neustart desselben Batch frei.
-   Bleibt der Fortschritt aus, folgt eine dauerhafte Warnung in Status und Log sowie
-   eine lokale Mac-Mitteilung. Companion 1.2.8 zeigt die Warnung außerdem auf dem Pixel.
-   Ein neuer Batch erhält ein neues Neustartbudget.
+   die Warnung auf, gibt aber keinen zweiten Neustart desselben Batch frei. Bleibt der
+   Fortschritt aus, folgt eine dauerhafte Warnung im Web-UI und Containerstatus.
+   Companion 1.2.8 zeigt sie außerdem auf dem Pixel. Ein neuer Batch erhält ein neues Budget.
 
-Der Wächter prüft Modell **Pixel** und Seriennummer **FA69M0305152** vor Eingriffen.
-Er ignoriert pausierte Überwachung, ausstehende Belege, Freigabedialoge und das
-72-Stunden-Limit. Bei Messfehlern, ADB-Unterbrechungen, Host-Schlaf oder Uhrsprüngen
-beginnt eine neue Beobachtungsfrist; Offline-Zeit ist kein belegter Stillstand.
-Ein inzwischen gewechselter Batch wird vor einem Neustart nochmals abgeglichen.
+Geprüft werden Modell **Pixel** und Seriennummer **FA69M0305152**. Pausierte
+Überwachung, ausstehende Belege, Freigabedialoge und das 72-Stunden-Limit werden
+respektiert. Verbindungsabbrüche, Host-Schlaf und Uhrsprünge gelten nicht als Stillstand.
 
-**Geräteneustarts sind ausgeschlossen.** Kein Cache-/Datenlöschen, kein Root,
-keine Änderung am Batch-Baum. Auf diesem Pixel funktionieren ADB und Stromversorgung
-nur mit der passenden Kabelkombination; niemals ohne ausdrückliche Freigabe rebooten.
+**Keine Geräteneustarts, kein Cache-/Datenlöschen, kein Root auf dem Pixel.** Dieses
+Pixel braucht eine spezielle Kabel-/Stromversorgung; Reboot nur nach ausdrücklicher Freigabe.
 
-## Mac-Dienst einrichten
+## ZimaOS-Einrichtung
 
 ```bash
-.venv/bin/python scripts/install-photos-watchdog-macos.py --device 192.168.178.53:5555
+docker build -t pixel-photo-uploader:3.3.20 .
+docker compose -f docker-compose.yml up -d
 ```
 
-Der Benutzer-LaunchAgent `de.pixelphotouploader.photos-watchdog` startet bei Anmeldung
-und nach einem Prozessabbruch erneut. Er arbeitet ohne sudo und ohne neue Android-
-Berechtigungen. Der persistente Zustand verhindert zusätzliche Neustarts desselben Batch.
-Die zuletzt bekannte DHCP-Adresse `192.168.178.53` ist keine feste Zusicherung.
-Bei IP-Wechsel den Installer erneut mit der aktuellen Adresse ausführen.
-
-Status und Log:
-
-```bash
-cat ~/.pixel-photo-uploader/photos-watchdog/photos-watchdog-status.json
- tail -n 10 ~/.pixel-photo-uploader/photos-watchdog/watchdog.log
-launchctl print gui/$(id -u)/de.pixelphotouploader.photos-watchdog
-```
-
-Dienst stoppen:
-
-```bash
-launchctl bootout gui/$(id -u)/de.pixelphotouploader.photos-watchdog
-```
-
-Der Agent bleibt für die nächste Anmeldung gespeichert. Für dauerhaftes Abschalten
-zusätzlich `~/Library/LaunchAgents/de.pixelphotouploader.photos-watchdog.plist` entfernen.
-Das Neustartbudget nicht löschen, um denselben Batch nicht wiederholt neu zu starten.
-
-Ein einmaliger lesender Check ohne Prozess-Neustartfreigabe:
-
-```bash
-.venv/bin/python -m app.photos_watchdog --adb /Users/family/.local/bin/adb --device 192.168.178.53:5555 --once
-```
-
-Nicht gleichzeitig mit einem laufenden Hintergrunddienst gegen denselben Zustandsordner
-starten. Eine Dateisperre verhindert konkurrierende Instanzen.
-
-## Companion 1.2.8
-
-```bash
-cd android/PixelPhotoCompanion
-./gradlew testDebugUnitTest assembleDebug lintDebug
-adb -s <Pixel-1-Transport> install -r app/build/outputs/apk/debug/app-debug.apk
-adb -s <Pixel-1-Transport> shell am start -n de.pixelphotouploader.companion/.MainActivity
-```
-
-1.2.8 ist gebaut und getestet, aber noch nicht auf dem derzeit unerreichbaren Pixel
-installiert. Mit 1.2.7 funktioniert die UID-Sendeverkehrsmessung bereits; Restzähler
-und Warnungsanzeige auf dem Pixel erfordern 1.2.8. Die Mac-Warnung funktioniert unabhängig.
+Alle Dienste laufen als UID/GID 1000. Der Ordner
+`/DATA/AppData/pixel-photo-uploader/watchdog-adb` muss UID 1000 gehören und Modus 700
+haben. Er wird nach `/home/ppu/.android` gemountet und hält den eigenen NAS-ADB-Schlüssel.
+Der private Mac-Schlüssel wird nicht kopiert. Das Pixel muss diesen NAS-Schlüssel
+beim ersten Verbinden ausdrücklich bestätigen. In Compose steht die zuletzt bekannte
+DHCP-Adresse `192.168.178.53:5555`; bei IP-Wechsel den Wert aktualisieren.
 
 Android 10 braucht nach einem Geräteneustart eventuell erneut USB und `adb tcpip 5555`.
-Der Wächter kann das nicht ohne vorhandene Verbindung reparieren. Die richtige
-Kabel-/Stromversorgung verwenden; den laufenden Upload dafür nicht unterbrechen.
+Ohne ADB-Verbindung kann der Wächter diesen Zustand nicht reparieren. Er meldet dann
+„Upload-Pixel nicht messbar“ und greift nicht ein. Der Upload durch Google Fotos kann
+unabhängig davon weiterlaufen. Companion 1.2.8 ist für Restzähler und Pixel-Warnung
+gebaut, aber noch nicht auf dem derzeit unerreichbaren Pixel installiert; die
+Sendeverkehrsmessung und Web-Warnung funktionieren bereits mit 1.2.7.
 
-## Prüfung
+## Status und Log
+
+Web-UI: Abschnitt „Google-Fotos-Wächter“. API: `GET /api/photos-watchdog`.
+Nach 150 Sekunden ohne neue Meldung zeigt die API einen veralteten Zustand an.
+
+```bash
+docker compose -f docker-compose.yml logs --tail=10 photos-watchdog
+cat /DATA/AppData/pixel-photo-uploader/state/photos-watchdog/photos-watchdog-status.json
+```
+
+Der Zustand liegt unter `state_root()/photos-watchdog/`. Das Neustartbudget nicht
+löschen, um denselben Batch nicht erneut neu zu starten. ADB lauscht nur innerhalb
+des Containers; kein Host-Port, kein privilegierter Container, kein Docker-Socket-Mount.
+
+## Tests
 
 ```bash
 .venv/bin/python -m pytest
@@ -97,8 +71,4 @@ cd android/PixelPhotoCompanion
 
 Tests simulieren Fortschritt, Stillstand, einen Neustart, eine Stunde Wartezeit,
 Prozessabsturz, Offline-Zeit, falsche Zielgeräte, Pausen und Freigabephasen. Kein Netzwerk.
-Ein echter Wiederanlauftest auf dem Pixel steht bis zur erneuten ADB-Verbindung aus.
-
-Die getrennten Abfragen `dumpsys netstats --poll` und `dumpsys netstats --full --uid`
-entsprechen dem [Android-10-Quelltext](https://github.com/aosp-mirror/platform_frameworks_base/blob/android10-release/services/core/java/com/android/server/net/NetworkStatsService.java):
-`--poll` aktualisiert die Messung, gibt aber noch keine UID-Historie aus.
+Der Live-Wiederanlauftest benötigt weiterhin eine ADB-Verbindung zum Pixel.

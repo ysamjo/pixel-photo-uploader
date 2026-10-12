@@ -1,8 +1,17 @@
+# Pixel Photo Uploader als Container auf ZimaOS.
+#
+# Diese Datei ist fuer den App-Manager von ZimaOS gedacht: im Web-Interface
+# unter "Install a customized app" den Inhalt einfuegen.
+#
+# Fuer lokale Entwicklung oder Tests auf einem normalen Docker-Host (macOS, Linux, Windows)
+# gibt es stattdessen docker-compose.local.yml:
+#   docker compose -f docker-compose.local.yml up -d --build
+
 name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.17
+    image: pixel-photo-uploader:3.3.20
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -15,6 +24,7 @@ services:
       # Archiv: hierher wird nur sortiert, daraus wird nur kopiert.
       - /DATA/Media/Photos/Archiv:/data/archive
       # Ein-Ordner-Prinzip: genau dieser Ordner wird per Resilio mit dem Pixel geteilt.
+      # Er liegt in Resilios Sync-Wurzel (/sync), damit die Sync-App ihn überhaupt sehen kann.
       - /DATA/AppData/resilio-sync/data/pixelsync:/data/pixelsync
       - /DATA/AppData/resilio-sync/data/pixelsync/staging:/data/staging
       - /DATA/AppData/resilio-sync/data/pixelsync/control:/data/control
@@ -23,13 +33,16 @@ services:
       - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
       - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
       - /DATA/Media/Photos/_eingang-inbox:/data/inbox
-      # Optional: ein Foto-Bestand UNTER /data/archive wird vom rekursiven Walk
-      # von selbst gefunden. :ro sichern den Bestand gegen "rm -rf" im Archiv.
-      # Danach einen Vollabgleich in der Web-UI einreihen, sonst bleibt er unsichtbar.
+      # Optionaler Foto-Bestand: ein Bind-Mount UNTER /data/archive genuegt, denn
+      # der Walk durchs Archiv ist rekursiv - kein Code, keine zweite Config-Wurzel.
+      # :ro ist keine Kosmetik: der Mount haengt im Archivordner, und ein
+      # "rm -rf Archiv/Altbestand" wuerde sonst durch ihn hindurch den Bestand loeschen.
+      # Nach dem Aktivieren genau EINEN Vollabgleich einreihen (Web-UI), sonst
+      # ueberspringt der Grundabgleich den Ordner wegen zu alter Schreibzeit.
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.17
+    image: pixel-photo-uploader:3.3.20
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -43,8 +56,19 @@ services:
       - /media/dropbox_2291ae2a1687/Kamera-Uploads:/data/dropbox
       - /media/onedrive_d34754613dec/Bilder/Eigene Aufnahmen:/data/onedrive
       - /DATA/Media/Photos/_eingang-inbox:/data/inbox
-      # Beide Dienste brauchen denselben Bestand.
+      # Beide Dienste muessen denselben Bestand sehen, sonst rechnet der Server
+      # Batches ab, die der Watcher nie katalogisiert hat (oder umgekehrt).
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
+
+  photos-watchdog:
+    image: pixel-photo-uploader:3.3.20
+    restart: unless-stopped
+    command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
+    environment:
+      PPU_STATE_DIR: /data/state
+    volumes:
+      - /DATA/AppData/pixel-photo-uploader/state:/data/state
+      - /DATA/AppData/pixel-photo-uploader/watchdog-adb:/home/ppu/.android
 
 x-casaos:
   id: io.github.ysamjo.pixel-photo-uploader
@@ -60,19 +84,19 @@ x-casaos:
     en_US: Sort photo archive and hand batches to a Pixel phone for Google Photos upload
     de_DE: Foto-Archiv sortieren und per Pixel-App nach Google Fotos übergeben
   description:
-    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, no ADB, no USB cable). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
-    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, kein ADB, kein USB-Kabel). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
+    en_US: Port of the Windows workflow for ZimaOS (companion app + Resilio, optional ADB watchdog). Sorts Dropbox/inbox shots into the archive (YYYY.MM), stages pickup batches in the Resilio share and settles the Android app receipts before freeing phone storage. Setup, counters and "sync now" live in the web UI, no SSH needed.
+    de_DE: Port des Windows-Workflows für ZimaOS (Companion-App + Resilio, optionaler ADB-Wächter). Sortiert Dropbox-/Inbox-Aufnahmen ins Archiv (JJJJ.MM), legt Abhol-Batches in der Resilio-Freigabe ab und rechnet die Rückbelege der Android-App ab, bevor auf dem Telefon Platz gemacht wird. Einrichtung, Zähler und „Jetzt synchronisieren" liegen im Web-UI, kein SSH nötig.
   author: family
   developer: family
   category: Media
   architectures:
     - amd64
     - arm64
-  version: "3.3.17"
-  update_at: "2026-10-07"
+  version: "3.3.20"
+  update_at: "2026-10-12"
   release_notes:
-    en_US: ZimaOS packaging; cross-filesystem import fix; linear dedup and receipt speedups; a phone that refuses to free a file now settles it as already secured, and a new batch stages while an earlier handover is still open; receipts are read before a missing handover copy is restocked, so a phone free-up is no longer undone by the server.
-    de_DE: ZimaOS-Paketierung; Import-Fix für Cloud-Mounts; schnellere Duplikatprüfung und Rückbeleg-Abrechnung; eine Absage des Telefons gilt als bereits gesichert statt als Blockade, ein neuer Batch läuft, solange eine Handreichung noch offen ist, und ein fehlendes Handreichungs-Exemplar wird erst nach dem Rückbeleg aus dem Archiv nachgelegt.
+    en_US: Includes an independent Google Photos watchdog with ADB, one app restart per stalled batch, persistent recovery limits and web status. No device reboots.
+    de_DE: "Integrierter Google-Fotos-Wächter mit ADB: höchstens ein App-Neustart pro festhängendem Batch, persistente Grenzen und Web-Status. Keine Geräteneustarts."
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues

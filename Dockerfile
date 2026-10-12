@@ -4,11 +4,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PPU_STATE_DIR=/data/state
 
+RUN apt-get update && apt-get install -y --no-install-recommends adb \
+    && rm -rf /var/lib/apt/lists/*
+
 # umbrelOS runs the containers as uid/gid 1000 and owns the bind mounts.
 RUN groupadd --gid 1000 ppu \
     && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin ppu \
-    && mkdir -p /data/archive /data/staging /data/control /data/state \
-    && chown -R 1000:1000 /data
+    && mkdir -p /data/archive /data/staging /data/control /data/state /home/ppu/.android \
+    && chown -R 1000:1000 /data /home/ppu/.android
 
 WORKDIR /app
 COPY requirements.txt ./

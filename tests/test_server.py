@@ -126,3 +126,19 @@ def test_eingabe_wird_escapiert_und_beibehalten(client, tmp_path):
     assert "<img" not in page.text
     assert "&lt;img" in page.text
     assert "StagingRoot is required" in page.text
+
+
+def test_watchdog_status_ist_frisch_und_enthaelt_keine_rohen_adb_fehler(tmp_path, monkeypatch):
+    import json
+    from app.server import watchdog_status
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("app.server.time.time", lambda: 1000)
+    d = tmp_path / "photos-watchdog"
+    d.mkdir()
+    p = d / "photos-watchdog-status.json"
+    p.write_text(json.dumps({"state": "offline", "message": "Pixel nicht erreichbar", "observedAt": 990, "error": "internal command"}))
+    assert watchdog_status() == {"state": "offline", "message": "Pixel nicht erreichbar", "observedAt": 990}
+    p.write_text(json.dumps({"observedAt": 1}))
+    assert watchdog_status()["state"] == "stale"
+    p.write_text('[]')
+    assert watchdog_status()["state"] == "unavailable"

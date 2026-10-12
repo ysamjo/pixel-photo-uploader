@@ -447,3 +447,20 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   Telefon-Medien. Dafür ist die App da, und die macht das nur nach ihrer Haken-Abfrage.
 - Fingerabdruck-Schlüssel überall: `NNNNNN-<fp12>.ext`, der Zwölfer-Teil ist die
   Inhaltsmarke, die die App sich für Absagen merkt (`AppState.refusedTokens`).
+
+## 11. Docker-Wächter am 2026-10-12
+
+Live geprüft nach Deploy von **3.3.20**, ca. 20:09 CEST: Server, Watcher und der neue
+Dienst `photos-watchdog` laufen aus demselben Image, unprivilegiert mit UID/GID 1000.
+Der Mac-LaunchAgent, seine lokalen Zustandsdateien und sein Installer wurden entfernt.
+Status-API und Web-UI melden den unerreichbaren Pixel korrekt als `offline`. Ein
+Prozess-Wiederanlauf auf dem Pixel ist bis zur Wiederherstellung von WLAN-ADB und
+Bestätigung des eigenen NAS-Schlüssels nicht live geprüft. Keine Geräte-Neustarts.
+
+Register nach dem Deploy: Katalog 178.104, abgeschlossen 672, staged 277, blocked 831,
+unverified 300 (davon 0 retry-bereit). Vorher waren 1.131 blockiert; 300 frühere
+Absage-Einträge wurden durch die bereits in 3.3.19 enthaltene Migration nach
+`unverified.csv` verschoben. Das ist keine neue Erfolgsbuchung. Archiv-Kopien bleiben.
+Der aktive Altbestand-Mount `/media/Data_1/Pictures:/data/archive/Altbestand:ro`
+ist erhalten (live `RW=false`). Ledger und vorherige Compose-Datei liegen vor dem
+Deploy gesichert unter `/DATA/AppData/pixel-photo-uploader/Archiv/state-vor-3.3.20-*.zip`.

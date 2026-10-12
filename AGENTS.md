@@ -21,7 +21,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 - Companion 1.2.7 setzt vorübergehende Fehler automatisch nach 5/15/30 Minuten zurück; der laufende Batch und seine Timeout-Uhr bleiben erhalten. Fehlende Voraussetzungen und 72-h-Timeout benötigen weiterhin einen Eingriff.
 
-- Optionaler ADB-Wächter: `app.photos_watchdog`, Mac-Hintergrunddienst `scripts/install-photos-watchdog-macos.py`. Ein Google-Fotos-Neustart pro Batch nach 30 Minuten ohne Fortschritt; danach Wartezeit und sichtbare Warnung. **Niemals das Pixel rebooten ohne ausdrückliche Freigabe:** Kabel/Stromversorgung und WLAN-ADB sind speziell. Liveprüfung benötigt ADB zum Pixel 1; siehe `PHOTOS-WATCHDOG-DE.md`.
+- Optionaler ADB-Wächter: `app.photos_watchdog`, eigener Docker-Dienst `photos-watchdog` aus demselben Uploader-Image. Ein Google-Fotos-Neustart pro Batch nach 30 Minuten ohne Fortschritt; danach Wartezeit und sichtbare Warnung. **Niemals das Pixel rebooten ohne ausdrückliche Freigabe:** Kabel/Stromversorgung und WLAN-ADB sind speziell. Liveprüfung benötigt ADB zum Pixel 1; siehe `PHOTOS-WATCHDOG-DE.md`.
 
 ## Konventionen
 
@@ -39,7 +39,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 ```bash
 .venv/bin/python -m pytest           # kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.19 .
+docker build -t pixel-photo-uploader:3.3.20 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
