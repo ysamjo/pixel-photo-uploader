@@ -84,17 +84,17 @@ tests/                     pytest-Suite (kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.20 .
+docker build -t pixel-photo-uploader:3.3.21 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.20 | gzip > pixel-photo-uploader-3.3.20.tar.gz
-scp pixel-photo-uploader-3.3.20.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.21 | gzip > pixel-photo-uploader-3.3.21.tar.gz
+scp pixel-photo-uploader-3.3.21.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.20.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.21.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren

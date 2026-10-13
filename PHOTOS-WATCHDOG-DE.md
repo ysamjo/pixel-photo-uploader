@@ -29,7 +29,7 @@ Pixel braucht eine spezielle Kabel-/Stromversorgung; Reboot nur nach ausdrückli
 ## ZimaOS-Einrichtung
 
 ```bash
-docker build -t pixel-photo-uploader:3.3.20 .
+docker build -t pixel-photo-uploader:3.3.21 .
 docker compose -f docker-compose.yml up -d
 ```
 
