@@ -115,6 +115,33 @@ def add_completion(entry: dict, fps: set[str], hashes: set[str], reason: str,
     return True
 
 
+def completion_totals(path: Path | None = None, now: datetime | None = None,
+                      window_hours: float = 24.0) -> dict:
+    """Gesicherte Bytes aus dem Ledger, gesamt und im Zeitfenster.
+
+    Grundlage ist `CompletedUtc`. Zeilen ohne brauchbaren Zeitstempel zaehlen nur
+    in die Gesamtsumme, nicht ins Fenster.
+    """
+    p = path or completed_path()
+    cut = (now or datetime.now(timezone.utc)) - timedelta(hours=float(window_hours))
+    total_bytes = total_count = recent_bytes = recent_count = 0
+    if p.exists():
+        with p.open(newline="", encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                try:
+                    size = int(str(row.get("Size", "") or 0))
+                except ValueError:
+                    size = 0
+                total_bytes += size
+                total_count += 1
+                if _parse_iso(str(row.get("CompletedUtc", ""))) >= cut:
+                    recent_bytes += size
+                    recent_count += 1
+    return {"bytes": total_bytes, "count": total_count,
+            "recent_bytes": recent_bytes, "recent_count": recent_count,
+            "window_hours": float(window_hours)}
+
+
 def load_blocked(path: Path | None = None) -> list[dict]:
     p = path or blocked_path()
     if not p.exists():

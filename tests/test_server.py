@@ -11,6 +11,8 @@ def _info(**over) -> dict:
         "catalog_files": 1234, "open_stable": 21, "open_bytes": 3221225472,
         "staged": 5, "completed": 900, "batch_gib": 5.0, "stable_seconds": 120,
         "rescan_minutes": 360, "deep_rescan_days": 7, "running": "", "pending": "",
+        "completed_bytes": 49142109367, "completed_bytes_24h": 34068593739,
+        "completed_24h": 3212, "unverified": 842, "unverified_due": 300, "blocked": 831,
     }
     info.update(over)
     return info
@@ -18,10 +20,20 @@ def _info(**over) -> dict:
 
 def test_seite_zeigt_zaehler_beide_knoepfe_und_log():
     html = render_page(_info(), log_lines=["2026-09-23 12:00:00 [OK] Catalog: 1 files"])
-    assert "1234" in html and "21" in html and "3.00 GiB" in html
+    assert "1.234" in html and "21" in html and "3,00 GiB" in html
     assert 'value="deep"' in html
     assert "Sync jetzt" in html and "Vollabgleich" in html
     assert "Catalog: 1 files" in html
+
+
+def test_zaehler_sind_deutsch_formatiert():
+    html = render_page(_info(catalog_files=178104, open_stable=172543,
+                             open_bytes=1594536093406))
+    assert "178.104" in html and "172.543" in html
+    assert "1.485,03 GiB" in html
+    assert "45,77 GiB" in html and "31,73 GiB" in html
+    assert "842" in html and "300 retry-bereit" in html and "831" in html
+    assert "178104" not in html and "1485.03 GiB" not in html
 
 
 def test_seite_ohne_config_bietet_setup_an(tmp_path):

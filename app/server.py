@@ -34,14 +34,16 @@ def _esc(value) -> str:
 def overview(cfg: dict) -> dict:
     """Status numbers without printing (shared by CLI and web)."""
     from .batches import backup_timeout_hours, batch_gib_clamped
-    from .store import (blocked_fingerprints, due_unverified, load_catalog,
-                        load_completion_sets, load_staged, unverified_fingerprints)
+    from .store import (blocked_fingerprints, completion_totals, due_unverified,
+                        load_catalog, load_completion_sets, load_staged,
+                        unverified_fingerprints)
     from .sync import deep_rescan_days
 
     catalog = load_catalog()
     fps, _ = load_completion_sets()
     blocked = blocked_fingerprints()
     unverified = unverified_fingerprints()
+    totals = completion_totals()
     stable_open = [e for e in catalog
                    if str(e.get("Stable")) == "True"
                    and str(e.get("Fingerprint", "")).lower() not in fps
@@ -75,6 +77,9 @@ def overview(cfg: dict) -> dict:
         "backup_timeout_hours": backup_timeout_hours(cfg),
         "catalog_files": len(catalog),
         "completed": len(fps),
+        "completed_bytes": totals["bytes"],
+        "completed_bytes_24h": totals["recent_bytes"],
+        "completed_24h": totals["recent_count"],
         "staged": len(load_staged()),
         "blocked": len(blocked),
         "unverified": len(unverified),
@@ -102,26 +107,33 @@ def watchdog_status() -> dict:
         return {"state": "unavailable", "message": "Google-Fotos-Wächter noch nicht verbunden."}
 
 
+# Deutsche Schreibweise: Punkt als Tausendertrenner, Komma als Dezimaltrenner.
+_DE_DIGITS = str.maketrans({",": ".", ".": ","})
+
+
+def _german(value, decimals: int = 0) -> str:
+    return f"{float(value):,.{decimals}f}".translate(_DE_DIGITS)
+
+
 def _gib(value) -> str:
     try:
-        return f"{float(value) / 1024**3:.2f} GiB"
+        return f"{_german(float(value) / 1024**3, 2)} GiB"
     except (TypeError, ValueError):
         return "-"
 
 
 def _number(value) -> str:
     try:
-        return str(int(value))
+        return _german(int(value))
     except (TypeError, ValueError):
         return "-"
 
 
 def _num(value) -> str:
     try:
-        number = float(value)
+        return f"{float(value):g}".translate(_DE_DIGITS)
     except (TypeError, ValueError):
         return "-"
-    return str(int(number)) if number.is_integer() else f"{number:g}"
 
 
 PAGE_STYLE = """
@@ -187,6 +199,8 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"<li><b>{_number(info.get('open_stable'))}</b>offen ({_gib(info.get('open_bytes'))})</li>"
             f"<li><b>{_number(info.get('staged'))}</b>auf dem Pixel</li>"
             f"<li><b>{_number(info.get('completed'))}</b>abgeschlossen</li>"
+            f"<li><b>{_gib(info.get('completed_bytes'))}</b>hochgeladen</li>"
+            f"<li><b>{_gib(info.get('completed_bytes_24h'))}</b>in den letzten 24 h</li>"
             f"<li><b>{_number(info.get('unverified'))}</b>unbestätigt "
             f"({_number(info.get('unverified_due'))} retry-bereit)</li>"
             f"<li><b>{_number(info.get('blocked'))}</b>blockiert</li>"

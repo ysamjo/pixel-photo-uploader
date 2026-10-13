@@ -106,6 +106,8 @@ def status() -> dict:
           f"{info['deep_rescan_days']:.0f} Tage")
     print(f"Katalog:      {info['catalog_files']} Dateien")
     print(f"Abgeschlossen:{info['completed']} Fingerabdruecke")
+    print(f"Hochgeladen:  {info['completed_bytes'] / 1024**3:.2f} GiB "
+          f"({info['completed_bytes_24h'] / 1024**3:.2f} GiB in den letzten 24 h)")
     print(f"Auf Pixel:    {info['staged']} Dateien")
     print(f"Unbestätigt:  {info['unverified']} Dateien ({info['unverified_due']} retry-bereit; nicht auf Pixel)")
     print(f"Blockiert:    {info['blocked']} Dateien (dauerhaft aus der Queue)")

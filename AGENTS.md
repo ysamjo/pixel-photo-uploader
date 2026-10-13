@@ -18,6 +18,9 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
   Speicherfreigabe mit eigenen Händen rückgängig machen. Deshalb rechnet `sync_once()`
   erst ab (`confirm_staged`/`settle_refused`) und füllt danach auf.
 - Läuft 24/7 als ZimaOS-Container mit integriertem Web-UI und Hintergrund-Watcher.
+- Die Statusseite zählt Katalog, offen, Handreichungen, abgeschlossen, **hochgeladen
+  (GiB, gesamt und letzte 24 h aus `completed.csv`)**, unbestätigt und blockiert.
+  Alle Zahlen deutsch formatiert (Punkt als Tausender-, Komma als Dezimaltrenner).
 
 - Companion 1.2.7 setzt vorübergehende Fehler automatisch nach 5/15/30 Minuten zurück; der laufende Batch und seine Timeout-Uhr bleiben erhalten. Fehlende Voraussetzungen und 72-h-Timeout benötigen weiterhin einen Eingriff.
 

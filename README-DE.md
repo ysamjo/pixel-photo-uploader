@@ -37,6 +37,17 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
 **[BEFUNDE-DE.md](BEFUNDE-DE.md)** — Sync-Verhalten, gemessen am Stand 2026-10-07.
 
+## Was die Statusseite zählt
+
+- **im Katalog** – jede Datei im Archiv, die der Abgleich gesehen hat.
+- **offen** – Dateien, die noch auf ihren Upload warten, mit Gesamtgröße.
+- **auf dem Pixel** – offene Handreichungen im Batch-Ordner.
+- **abgeschlossen / hochgeladen / in den letzten 24 h** – Belege aus `completed.csv`, dazu die Byte-Summen: „hochgeladen" ist alles seit der ersten Buchung, „in den letzten 24 h" das Fenster davor. Grundlage ist `CompletedUtc`; die Fingerabdrücke aus dem Duplikat-Kurzschluss (`Identical content already completed`) sind mitgezählt.
+- **unbestätigt** – Google Fotos sagte zweimal „Nichts freizugeben": kein Erfolgsbeleg, Archiv-Kopie bleibt, Retry frühestens nach 24 h.
+- **blockiert** – endgültig aus der Queue, aus einem von zwei Gründen: entweder kam nach `BackupTimeoutHours` (Standard 72 h) kein Rückbeleg, oder es ist eine 0-Byte-Datei, die Google Fotos nicht sichern kann. Die Archiv-Kopie bleibt, nur die Handreichung aufs Pixel endet; ein blockierter Fingerabdruck läuft nie wieder ein.
+
+Alle Zahlen stehen in deutscher Schreibweise (Punkt als Tausender-, Komma als Dezimaltrenner).
+
 ## Unbeaufsichtigter Betrieb auf dem Pixel
 
 Der optionale [Google-Fotos-Wächter](PHOTOS-WATCHDOG-DE.md) misst echten Sendeverkehr und den Restzähler, startet nach 30 Minuten Stillstand nur Google Fotos einmal pro Batch neu und meldet anhaltende Ausfälle nach einer Stunde Wartezeit. Kein Geräteneustart. Companion 1.2.8 zeigt die Warnungen auf dem Pixel. Der Wächter läuft auf ZimaOS als Docker-Dienst; Liveprüfung und Installation der Companion-Erweiterung benötigen ADB zum Pixel 1.
