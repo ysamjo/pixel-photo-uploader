@@ -41,6 +41,8 @@ Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
 
 Der optionale [Google-Fotos-Wächter](PHOTOS-WATCHDOG-DE.md) misst echten Sendeverkehr und den Restzähler, startet nach 30 Minuten Stillstand nur Google Fotos einmal pro Batch neu und meldet anhaltende Ausfälle nach einer Stunde Wartezeit. Kein Geräteneustart. Companion 1.2.8 zeigt die Warnungen auf dem Pixel. Der Wächter läuft auf ZimaOS als Docker-Dienst; Liveprüfung und Installation der Companion-Erweiterung benötigen ADB zum Pixel 1.
 
+Der Telefonspeicher wird seit Companion 1.2.9 mitgeführt: Die App misst ihn, warnt unter 3 GiB, übergibt unter 1 GiB keinen neuen Batch mehr, räumt unter Druck alte Resilio-Teilkopien frei und schreibt den Stand als `pixel-storage.json` in den Kontrollordner. Der Uploader liest ihn und hält zusätzlich `ReserveGiB` frei — der Puffer, der bis 3.3.20 nur in der Konfiguration stand. Vor einer Vergrößerung der Batchgröße bleibt eine neue Messung des freien Telefonspeichers Pflicht.
+
 Companion 1.2.7 erholt sich automatisch von vorübergehenden Fehlern (Wiederholung nach 5/15/30 Minuten), ohne den laufenden Batch neu zu scannen oder dessen 72-Stunden-Frist zu verlängern. Deaktivierte Sicherung, voller Kontospeicher, fehlendes Google Fotos und das 72-Stunden-Limit erfordern einen Eingriff. Das Pixel bleibt entsperrt am Ladegerät; Companion, Google Fotos und Resilio sollten von der Akkuoptimierung ausgenommen sein. Details und Android-Prüfbefehle stehen in [android/PixelPhotoCompanion/README-DE.md](android/PixelPhotoCompanion/README-DE.md).
 
 ## Paketinhalt
@@ -73,17 +75,17 @@ tests/                     pytest-Suite (kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.20 .
+docker build -t pixel-photo-uploader:3.3.21 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.20 | gzip > pixel-photo-uploader-3.3.20.tar.gz
-scp pixel-photo-uploader-3.3.20.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.21 | gzip > pixel-photo-uploader-3.3.21.tar.gz
+scp pixel-photo-uploader-3.3.21.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.20.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.21.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren

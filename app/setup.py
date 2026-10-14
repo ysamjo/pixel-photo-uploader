@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import (APP_BATCH_FOLDER, MAX_BATCH_GIB, MAX_DEEP_RESCAN_DAYS, MAX_STABLE_SECONDS,
-               MIN_BATCH_GIB, MIN_DEEP_RESCAN_DAYS)
+from . import (APP_BATCH_FOLDER, MAX_BATCH_GIB, MAX_DEEP_RESCAN_DAYS, MAX_RESERVE_GIB,
+               MAX_STABLE_SECONDS, MIN_BATCH_GIB, MIN_DEEP_RESCAN_DAYS, MIN_RESERVE_GIB)
 from . import (DEFAULT_BACKUP_TIMEOUT_HOURS, MAX_BACKUP_TIMEOUT_HOURS,
                MIN_BACKUP_TIMEOUT_HOURS)
 from . import config_path
@@ -49,6 +49,7 @@ def apply_setup(values: dict) -> dict:
                       "(leave both empty to import nothing).")
 
     batch = clamp(_number(values, "BatchGiB", 5.0, errors), MIN_BATCH_GIB, MAX_BATCH_GIB)
+    reserve = clamp(_number(values, "ReserveGiB", 1.5, errors), MIN_RESERVE_GIB, MAX_RESERVE_GIB)
     stable_s = clamp(_number(values, "StableSeconds", 120.0, errors), 0, MAX_STABLE_SECONDS)
     rescan = max(0.0, _number(values, "RescanMinutes", 360.0, errors))
     deep_days = clamp(_number(values, "DeepRescanDays", 7.0, errors),
@@ -75,7 +76,7 @@ def apply_setup(values: dict) -> dict:
         "InboxRoot": folders["InboxRoot"],
         "SourceRoot": folders["SourceRoot"], "StagingRoot": folders["StagingRoot"],
         "ControlRoot": folders["ControlRoot"],
-        "BatchGiB": batch, "StableMinutes": stable_s / 60,
+        "BatchGiB": batch, "ReserveGiB": reserve, "StableMinutes": stable_s / 60,
         "RescanMinutes": int(rescan), "DeepRescanDays": int(deep_days),
         "BackupTimeoutHours": timeout_h,
     })

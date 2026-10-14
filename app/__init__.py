@@ -4,11 +4,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_VERSION = "3.3.20"
+APP_VERSION = "3.3.21"
 APP_BATCH_FOLDER = "Batches"
 
 MIN_BATCH_GIB = 0.25
 MAX_BATCH_GIB = 10.0
+# Free space the uploader leaves untouched on the Pixel. The companion app reports the
+# phone's real free bytes; without a reserve the handover fills the phone to the last
+# byte and Resilio can no longer create a whole batch folder.
+MIN_RESERVE_GIB = 0.0
+MAX_RESERVE_GIB = 10.0
 MAX_STABLE_SECONDS = 43200
 # Folders whose write-time is older than the last pass stay closed; the surplus
 # is the buffer for clock shifts, suspend and the OS write-back cache.

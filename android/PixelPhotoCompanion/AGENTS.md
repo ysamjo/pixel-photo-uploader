@@ -31,6 +31,21 @@ adb shell am start -n de.pixelphotouploader.companion/.MainActivity
 - Der Wächter schreibt atomar `files/photos-watchdog-status.json`; frische Warnungen werden in Status und Vordergrundbenachrichtigung angezeigt. Die App selbst darf Google Fotos nicht force-stoppen.
 - Kein Geräteneustart ohne ausdrückliche Freigabe; das Pixel braucht spezielle Kabel/Stromversorgung.
 
+## Speicherwaechter ab 1.2.9
+
+- `DeviceStorage` misst den verfuegbaren Speicher (`StatFs.getAvailableBytes`, nicht
+  `getFreeBytes`); Rechnung, Schwellen und Texte sind Android-frei und unit-getestet.
+- Schwellen: 3 GiB Warnung in Status/Benachrichtigung, 1 GiB harte Kante fuer einen neuen Batch.
+  Der Speicher wird phasenunabhaengig zuerst gemessen, damit der Stand auch waehrend einer
+  laufenden Handreichung stimmt.
+- `StorageReport` schreibt alle 5 Minuten `pixel-storage.json` atomar in den Kontrollordner.
+  Das ist die einzige Quelle fuer den freien Phonespeicher auf der NAS: der Uploader hat kein
+  ADB. Die Schluesselnamen sind der Vertrag mit `app/batches.py:pixel_storage` — beim Aendern
+  beide Seiten mitziehen.
+- `StorageResidue` raeumt nur unter Speicherdruck und nur, was eine Stunde unberuehrt liegt:
+  Resilio-Teilkopien (`*.!sync`) und eigene `.receipt-*.tmp`. `.sync`-Metadaten sind tabu,
+  und `lastModified() == 0` heisst unbekannt, nicht alt — im Zweifel liegen lassen.
+
 ## Automatische Erholung
 
 - Beim Öffnen der App startet eine zuvor aktive, bestätigte Überwachung sofort wieder; bewusst pausierte Überwachung bleibt pausiert.
@@ -55,4 +70,8 @@ adb shell am start -n de.pixelphotouploader.companion/.MainActivity
 - **Kein `uiautomator dump`** auf dem Gerät, Screenshots nur nach `/data/local/tmp` —
   beides schreibt sonst in den MediaStore-Ordner, den die App selbst überwacht.
 - **Niemals Dateien im Batch-Baum auf dem Telefon anfassen:** Resilio überträgt jede
-  Löschung zurück auf die NAS.
+  Löschung zurück auf die NAS. Die **einzigen** Ausnahmen sind `*.!sync` und eigene
+  `.receipt-*.tmp`: das sind lokale Reste ohne Gegenstück auf der NAS (eine Teilkopie
+  existiert nur auf dem Telefon), und genau sie gibt `StorageResidue` frei — nie eine
+  Nutzdatei, nie einen Batch-Ordner. Wer diese Grenze ausweitet, muss zuerst klären,
+  wie Resilio die Löschung zurückträgt.

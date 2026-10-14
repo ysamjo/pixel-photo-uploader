@@ -21,6 +21,20 @@ STALL_SECONDS = 30 * 60
 COOLDOWN_SECONDS = 60 * 60
 MIN_TX_PROGRESS = 8 * 1024 * 1024
 
+# Bekannte Speicherfresser auf dem dedizierten Pixel. `/data` ist die harte Kante;
+# die uebrigen Pfade beantworten die Frage, wohin der Platz gegangen ist, ohne dass
+# jemand sich per Kabel einloggen muss. Google-Fotos' interner Cache unter
+# /data/data/... ist fuer die Shell nicht lesbar — nur sein externer Anteil.
+STORAGE_HOGS = {
+    "share": "/sdcard/DCIM/PixelSync",
+    "staging": "/sdcard/DCIM/PixelSync/staging",
+    "photos_external": "/sdcard/Android/data/com.google.android.apps.photos",
+    "thumbnails": "/sdcard/DCIM/.thumbnails",
+    "lost_dir": "/sdcard/LOST.DIR",
+    "trashed": "/sdcard/DCIM/.trashed",
+    "local_tmp": "/data/local/tmp",
+}
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -116,6 +130,63 @@ def batch_key(prefs: dict) -> str:
     return hashlib.sha256((str(prefs["batchStartedAt"]) + "\n" + prefs["batchPaths"]).encode()).hexdigest()
 
 
+def parse_df(text: str) -> dict | None:
+    """`df -k`-Ausgabe in Bytes. Android zaehlt 1K-Bloecke in Feld 1..3.
+
+    Die letzte Zeile mit drei Zahlen gewinnt: Android stellt manchen Mounts noch
+    eine zweite Zeile voran, und eine feste Zeilennummer waere geraten.
+    """
+    for line in reversed(text.splitlines()):
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        try:
+            used, available = int(fields[2]), int(fields[3])
+        except ValueError:
+            continue
+        return {"freeBytes": available * 1024, "totalBytes": (used + available) * 1024}
+    return None
+
+
+def _first_int(lines: list[str]) -> int | None:
+    for line in lines:
+        value = line.strip().split()[0] if line.strip() else ""
+        try:
+            return int(value)
+        except ValueError:
+            continue
+    return None
+
+
+def parse_storage(text: str) -> dict:
+    """ADB-Ausgabe in ein Speicherobjekt. Unbekanntes fehlt, statt geraten zu werden."""
+    sections: dict[str, list[str]] = {}
+    current = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("@@"):
+            current = line[2:].strip()
+            sections[current] = []
+            continue
+        if current:
+            sections[current].append(line)
+
+    result: dict = {"hogs": {}}
+    result.update(parse_df("\n".join(sections.get("df", []))) or {})
+    for name in STORAGE_HOGS:
+        kb = _first_int(sections.get(name, []))
+        if kb is not None:
+            result["hogs"][name] = kb * 1024
+    for key, section in (("partialCount", "partial_count"), ("tempCount", "temp_count")):
+        value = _first_int(sections.get(section, []))
+        if value is not None:
+            result[key] = value
+    partial_kb = _first_int(sections.get("partial_kb", []))
+    if partial_kb is not None:
+        result["partialBytes"] = partial_kb * 1024
+    return result
+
+
 class Adb:
     def __init__(self, binary: str, device: str):
         self.binary, self.device = binary, device
@@ -156,6 +227,31 @@ class Adb:
         batch = batch_key(prefs)
         return Sample(batch, tx, remaining)
 
+    def storage(self) -> dict:
+        """Freier Speicher und bekannte Fresser in einem einzigen ADB-Aufruf.
+
+        Ohne Wurzelrechte nicht messbar: Googles interner App-Cache unter
+        /data/data/<paket> — deshalb der externe Anteil. `du` laeuft ueber die
+        Freigabe, ist also der teure Teil; er bleibt ohne Einfluss auf das
+        Neustartbudget und darf fehlschlagen.
+        """
+        lines = ["echo '@@df'", "df -k /data"]
+        for name, path in STORAGE_HOGS.items():
+            lines += [f"echo '@@{name}'", f"du -sk {path} 2>/dev/null"]
+        lines += [
+            "echo '@@partial_count'",
+            "find /sdcard/DCIM/PixelSync -name '*.!sync' -type f 2>/dev/null | wc -l",
+            "echo '@@partial_kb'",
+            # Kein Glob: die Teilkopien liegen unterschiedlich tief (staging/Batches/<id>/x.!sync),
+            # und ein Glob auf feste Tiefe meldete still 0 Byte. `find -exec du` bricht mit
+            # dem tieferen Ordner nicht und meldet nur, was wirklich da ist.
+            "find /sdcard/DCIM/PixelSync -name '*.!sync' -type f -exec du -k {} ';' "
+            "2>/dev/null | awk '{s+=$1} END {print s+0}'",
+            "echo '@@temp_count'",
+            "find /sdcard/DCIM/PixelSync/control -name '.receipt-*.tmp' -type f 2>/dev/null | wc -l",
+        ]
+        return parse_storage(self.run("shell", "; ".join(lines)))
+
     def restart_photos(self, expected_batch: str) -> None:
         self.connect()
         # Unmittelbar vor Eingriff nochmals pruefen: kein inzwischen begonnener Freigabedialog.
@@ -190,11 +286,27 @@ MESSAGES = {
 }
 
 
+def storage_sample(adb: Adb) -> dict | None:
+    """Speichermessung darf den Fortschrittswaechter nie anhalten.
+
+    Ein fehlgeschlagenes `du` ist kein Stillstand von Google Fotos: dann fehlt nur
+    die Speicherzahl, der Neustart-Automat laeuft unveraendert weiter.
+    """
+    try:
+        return adb.storage()
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
 def cycle(adb: Adb, state_path: Path, allow_restart: bool, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    storage = None
     try:
         adb.connect()
+        storage = storage_sample(adb)
+        if storage is not None:
+            storage["observedAt"] = now
         sample = adb.sample(now)
         if sample is None:
             action = "inactive"  # Budget nicht loeschen: Pausieren ist kein neuer Batch.
@@ -209,11 +321,12 @@ def cycle(adb: Adb, state_path: Path, allow_restart: bool, now: float | None = N
         status = {"state": action, "message": MESSAGES[action], "observedAt": now,
                   "txBytes": sample.tx_bytes if sample else None,
                   "remaining": sample.remaining if sample else None,
-                  "cooldownUntil": state.get("cooldown_until")}
+                  "cooldownUntil": state.get("cooldown_until"),
+                  "storage": storage}
         adb.report(status)
     except (subprocess.SubprocessError, OSError, ValueError, ET.ParseError) as exc:
         status = {"state": "offline", "message": MESSAGES["offline"], "observedAt": now,
-                  "error": str(exc)}
+                  "error": str(exc), "storage": storage}
     save(state_path.with_name("photos-watchdog-status.json"), status)
     print(json.dumps(status, ensure_ascii=False), flush=True)
     return status

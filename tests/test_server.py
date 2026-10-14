@@ -142,3 +142,68 @@ def test_watchdog_status_ist_frisch_und_enthaelt_keine_rohen_adb_fehler(tmp_path
     assert watchdog_status()["state"] == "stale"
     p.write_text('[]')
     assert watchdog_status()["state"] == "unavailable"
+
+
+def test_watchdog_status_reicht_die_speichermessung_durch(tmp_path, monkeypatch):
+    import json
+    from app.server import watchdog_status
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr("app.server.time.time", lambda: 1000)
+    d = tmp_path / "photos-watchdog"
+    d.mkdir()
+    (d / "photos-watchdog-status.json").write_text(json.dumps({
+        "state": "tracking", "message": "laeuft", "observedAt": 990,
+        "storage": {"freeBytes": 1024, "hogs": {"share": 4096}}}))
+    assert watchdog_status()["storage"] == {"freeBytes": 1024, "hogs": {"share": 4096}}
+
+
+def test_speicherseite_zeigt_bericht_restbestand_und_den_fehlenden_bericht():
+    html = render_page(_info(reserve_gib=1.5))
+    assert "Pixel-Speicher" in html
+    assert "Noch kein Speicherbericht" in html
+
+    html = render_page(_info(reserve_gib=1.5, pixel_storage={
+        "freeBytes": 2 * 1024**3, "totalBytes": 24 * 1024**3, "ageSeconds": 120.0,
+        "fresh": True, "warnLevel": "warn", "partialCount": 2,
+        "partialBytes": 1024**3, "tempCount": 1, "tempBytes": 512,
+        "reclaimedBytes": 4096}))
+    assert "2.00 GiB" in html and "24.00 GiB" in html
+    assert "wird knapp" in html
+    assert "Resilio-Teilkopien: 2 (1.00 GiB)" in html
+    assert "Gemeldet vor 2 min" in html
+    # 4 KiB duerfen nicht als "0.00 GiB" durchgehen — das liest sich wie "nichts frei gegeben".
+    assert "zuletzt freigegeben: 4.0 KiB" in html
+
+    html = render_page(_info(reserve_gib=1.5, pixel_storage={
+        "freeBytes": 1024, "totalBytes": 2048, "ageSeconds": 4000.0,
+        "fresh": False, "warnLevel": "ok"}))
+    assert "veraltet" in html
+
+
+def test_waechter_fresser_erscheinen_und_werden_escapiert():
+    html = render_page(_info(photos_watchdog={
+        "state": "tracking", "message": "laeuft",
+        "storage": {"hogs": {"share": 1024**3, "thumbnails": "<img src=x>"}}}))
+    assert "Auf dem Gerät gemessen" in html
+    assert "share 1.00 GiB" in html
+    assert "<img" not in html
+
+
+def test_status_meldet_speicherbericht_und_reserve(client, tmp_path):
+    import json
+    import time
+    client.post("/api/setup", data={
+        "DropboxRoot": "", "InboxRoot": "", "SourceRoot": str(tmp_path / "archive"),
+        "StagingRoot": str(tmp_path / "staging"), "ControlRoot": str(tmp_path / "control"),
+        "BatchGiB": "5", "ReserveGiB": "2", "StableSeconds": "120",
+        "RescanMinutes": "360", "DeepRescanDays": "7"})
+    (tmp_path / "control" / "pixel-storage.json").write_text(json.dumps({
+        "version": 1, "observedAtEpochMs": int(time.time() * 1000),
+        "freeBytes": 3 * 1024**3, "totalBytes": 24 * 1024**3,
+        "warnLevel": "warn"}), encoding="utf-8")
+
+    status = client.get("/api/status").json()
+    assert status["configured"] is True
+    assert status["pixel_storage"]["freeBytes"] == 3 * 1024**3
+    assert status["pixel_storage"]["fresh"] is True
+    assert status["reserve_gib"] == 2.0

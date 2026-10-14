@@ -327,6 +327,14 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   dort nicht. **Ein Puffer fehlt:** `ReserveGiB` (1,5) steht zwar in der Konfiguration,
   wird aber nirgends gelesen — der Server kennt den freien Phonespeicher nicht und
   kann nur über die Batch-Größe darauf Rücksicht nehmen.
+  **Nachtrag (ab 3.3.21 / Companion 1.2.9):** Der Puffer ist gebaut. Die App misst den
+  verfügbaren Speicher, schreibt ihn als `control/pixel-storage.json`, gibt unter 1 GiB
+  keinen neuen Batch mehr frei und räumt unter Druck abgebrochene Resilio-Teilkopien
+  (`*.!sync`, älter als eine Stunde) frei. `select_and_stage_batch()` bindet `room`
+  zusätzlich an `freeBytes - ReserveGiB`, und `ReserveGiB` ist jetzt ein sichtbares
+  Setup-Feld statt eines blinden Werts. **Die 8,2 GiB von damals sind nicht neu
+  gemessen** — die App-Seite ist auf dem Gerät noch nicht live geprüft (der Pixel war
+  beim Bau unerreichbar, §11), und der ADB-Anteil der Messung ebenfalls nicht.
 - Die **Log-Flut ist mit der Kappe fast weg**: statt ~30 Überspring-Warnungen je
   Durchlauf (34.682 seit dem Bestand) sind es jetzt genau **2** — die beiden Riesen
   oben. `grep -v "Single file larger"` ist damit nur noch für Alt-Protokolle nötig.

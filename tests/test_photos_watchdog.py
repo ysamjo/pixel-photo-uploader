@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from app.photos_watchdog import (Adb, Sample, advance, cycle, eligible, preferences,
-                                 wifi_tx, MIN_TX_PROGRESS)
+from app.photos_watchdog import (Adb, Sample, advance, cycle, eligible, parse_df,
+                                 parse_storage, preferences, wifi_tx, MIN_TX_PROGRESS)
 
 
 def tick(state, seconds, tx=0, remaining=None, batch="batch-a"):
@@ -108,10 +108,102 @@ class FakeAdb:
         pass
     def sample(self, now):
         return Sample("batch-a", 0)
+    def storage(self):
+        return {"freeBytes": 3 * 1024**3, "totalBytes": 24 * 1024**3,
+                "hogs": {"share": 100}, "partialCount": 1, "partialBytes": 2048}
     def restart_photos(self, expected_batch):
         self.restarts += 1
     def report(self, status):
         self.reported.append(status)
+
+
+DF_OUTPUT = ("Filesystem     1K-blocks     Used Available Use% Mounted on\n"
+             "/dev/block/dm-4 25000000 16749000  8251000  67% /data\n")
+
+
+def test_df_und_du_ausgaben_werden_in_bytes_uebersetzt():
+    assert parse_df(DF_OUTPUT) == {"freeBytes": 8251000 * 1024,
+                                  "totalBytes": 25000000 * 1024}
+    assert parse_df("kein df") is None
+    assert parse_df("") is None
+
+
+def test_speicherausgabe_laesst_unbekanntes_weg_statt_zu_raten():
+    text = ("@@df\n" + DF_OUTPUT + "@@share\n1048576\t/sdcard/DCIM/PixelSync\n"
+            "@@photos_external\n\n@@lost_dir\nkeine zahl\n"
+            "@@partial_count\n3\n@@partial_kb\n2048\n@@temp_count\n0\n")
+    parsed = parse_storage(text)
+    assert parsed["hogs"]["share"] == 1048576 * 1024
+    assert "photos_external" not in parsed["hogs"]
+    assert "lost_dir" not in parsed["hogs"]
+    assert parsed["partialCount"] == 3
+    assert parsed["partialBytes"] == 2048 * 1024
+    assert parsed["tempCount"] == 0
+    assert parsed["freeBytes"] == 8251000 * 1024
+
+
+def test_speichermessung_landet_im_status_ohne_das_budget_zu_beruehren(tmp_path):
+    adb = FakeAdb()
+    status = cycle(adb, tmp_path / "state.json", True, 60)
+    assert status["storage"]["hogs"]["share"] == 100
+    assert status["storage"]["observedAt"] == 60
+    assert status["state"] == "tracking"
+
+
+def test_adb_skript_ueberlebt_eine_echte_shell_und_findet_auch_tiefe_teilkopien(tmp_path):
+    """Das Skript ist eine einzige Quoting-Kette; hier laeuft es wirklich durch `sh`.
+
+    Ein Glob auf feste Tiefe hat in der Erprobung still 0 Byte gemeldet, weil die
+    Teilkopien unter staging/Batches/<id>/... liegen. Deshalb `find`: der Test legt
+    genau diese Tiefe an und verlangt ihre Bytes zurueck.
+    """
+    import shutil
+    import subprocess
+    for tool in ("sh", "find", "du", "awk", "wc"):
+        if not shutil.which(tool):
+            pytest.skip(f"{tool} fehlt")
+
+    adb = Adb("adb", "dummy")
+    captured = []
+    def fake_run(*args):
+        if args and args[0] == "shell":
+            captured.append(args[1])
+        return ""
+    adb.run = fake_run
+    assert adb.storage() == {"hogs": {}}  # leere ADB-Ausgabe bleibt ehrlich leer
+    command = captured[-1]
+
+    root = tmp_path / "PixelSync"
+    (root / "staging/Batches/b1/deep/nested").mkdir(parents=True)
+    (root / "staging/Batches/b1/a.jpg.!sync").write_bytes(b"x" * 8192)
+    (root / "staging/Batches/b1/deep/nested/b.jpg.!sync").write_bytes(b"x" * 4096)
+    # Nutzdatei und Marker sind keine Reste und duerfen die Zaehlung nicht verfaelschen.
+    (root / "staging/Batches/b1/c.jpg").write_bytes(b"z" * 4096)
+    (root / "staging/Batches/b1/_batch-manifest.json").write_text("{}", encoding="utf-8")
+    (root / "control").mkdir()
+    (root / "control/.receipt-1.tmp").write_bytes(b"y" * 512)
+    local = command.replace("/sdcard/DCIM/PixelSync", str(root))
+    result = subprocess.run(["sh", "-c", local], capture_output=True, text=True, timeout=60)
+
+    parsed = parse_storage(result.stdout)
+    assert parsed["partialCount"] == 2
+    assert parsed["partialBytes"] >= 8192 + 4096  # 1K-Bloecke, nie stillschweigend 0
+    assert parsed["tempCount"] == 1
+    assert parsed["hogs"]["staging"] >= 8192
+
+
+def test_fehlgeschlagene_speichermessung_haelt_den_waechter_nicht_an(tmp_path):
+    """Ein fehlgeschlagenes `du` ist kein Stillstand von Google Fotos."""
+    adb = FakeAdb()
+    def broken():
+        raise ValueError("du nicht moeglich")
+    adb.storage = broken
+    status = None
+    for now in range(0, 1920, 60):
+        status = cycle(adb, tmp_path / "state.json", True, now)
+    assert adb.restarts >= 1  # der Neustart-Automat laeuft unveraendert weiter
+    assert status["state"] == "restarted"
+    assert status["storage"] is None
 
 
 def test_restart_is_persisted_before_action_and_does_not_repeat_after_crash(tmp_path):

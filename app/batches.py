@@ -42,6 +42,12 @@ UNVERIFIED_RETRY_GIB = 0.5
 # wird. 600 s sind gut das Doppelte der langsamsten gemessenen Uebertragung.
 REPAIR_GRACE_SECONDS = 600.0
 
+# Speicherbericht des Pixels (Companion schreibt ihn in den Kontrollordner). Aelter als
+# das hier gilt er als Stand von gestern: der freie Platz aendert sich mit jedem Batch,
+# eine alte Zahl wuerde die Kapazitaet falsch verkleinern oder verkuerzen.
+STORAGE_REPORT_NAME = "pixel-storage.json"
+STORAGE_REPORT_MAX_AGE_SECONDS = 30 * 60
+
 
 def batch_dir(staging_root: Path, batch_id: str) -> Path:
     return staging_root / APP_BATCH_FOLDER / batch_id
@@ -114,6 +120,68 @@ def _receipt_paths(control_root: Path, field: str) -> list[str]:
 
 def receipt_removed_paths(control_root: Path) -> list[str]:
     return _receipt_paths(control_root, "removedPaths")
+
+
+def pixel_storage(control_root: Path, now: datetime | None = None) -> dict | None:
+    """Letzter Speicherbericht des Pixels, oder None wenn keiner vorliegt.
+
+    Der Bericht kommt wie ein Rueckbeleg durch die Resilio-Freigabe. Er ist die einzige
+    Quelle fuer den freien Telefonspeicher: der Uploader hat selbst kein ADB (das ist der
+    eigene Dienst ``photos-watchdog``) und kann die Zahl nicht messen. Ohne sie bleibt
+    nur die Batchgroesse als Naeherung — genau der Puffer, der bisher fehlte.
+    """
+    if not control_root.is_dir():
+        return None
+    try:
+        report = json.loads((control_root / STORAGE_REPORT_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get("version") != 1:
+        return None
+    try:
+        free = int(report["freeBytes"])
+        total = int(report["totalBytes"])
+        observed = int(report["observedAtEpochMs"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    age = (now or datetime.now(timezone.utc)).timestamp() - observed / 1000.0
+    result = {"freeBytes": free,    "totalBytes": total, "observedAtEpochMs": observed,
+              "ageSeconds": age, "fresh": 0 <= age <= STORAGE_REPORT_MAX_AGE_SECONDS,
+              "warnLevel": str(report.get("warnLevel", ""))}
+    # Restbestand durchreichen, damit das Web-UI zeigt, was die App gefunden hat —
+    # fehlende Felder bleiben None statt zu raten.
+    for field in ("partialCount", "partialBytes", "tempCount", "tempBytes",
+                  "reclaimedCount", "reclaimedBytes"):
+        try:
+            result[field] = int(report[field])
+        except (KeyError, TypeError, ValueError):
+            result[field] = None
+    return result
+
+
+def _phone_room(cfg: dict, room: int) -> int:
+    """Handover an den gemeldeten freien Telefonspeicher binden.
+
+    ``room`` ist die Batch-Kappe minus der schon uebergebenen Bytes; die liegen bereits
+    auf dem Pixel, seine gemeldeten freien Bytes sind also der Platz fuer Neues. Davon
+    bleibt ``ReserveGiB`` frei — der Puffer, der bisher nur in der Konfiguration stand
+    und nirgends gelesen wurde (BEFUNDE-DE.md §8): ohne ihn konnte Resilio einen Batch
+    nicht mehr ganz anlegen, sobald das Telefon vollaeuft.
+    """
+    control = str(cfg.get("ControlRoot", "")).strip()
+    if not control:
+        return room
+    storage = pixel_storage(Path(control))
+    if not storage or not storage["fresh"]:
+        return room
+    reserve = int(max(0.0, float(cfg.get("ReserveGiB", 0.0))) * 1024 ** 3)
+    available = storage["freeBytes"] - reserve
+    if available >= room:
+        return room
+    write_log(f"Pixel reports {storage['freeBytes'] / 1024**3:.2f} GiB free, "
+              f"{reserve / 1024**3:.2f} GiB reserved; handover limited to "
+              f"{max(0, available) / 1024**3:.2f} GiB.", "WARN")
+    return available
 
 
 def receipt_refused_paths(control_root: Path) -> list[str]:
@@ -462,10 +530,10 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     unverified_file = unverified_file or default_unverified_path()
     capacity = batch_capacity_bytes(float(cfg.get("BatchGiB", 5.0)), MIN_BATCH_GIB, MAX_BATCH_GIB)
     held_bytes = sum(int(str(e.get("Size", "0")) or 0) for e in staged)
-    room = capacity - held_bytes
+    room = _phone_room(cfg, capacity - held_bytes)
     if room <= 0:
-        write_log(f"{len(staged)} files already hold the whole "
-                  f"{capacity / 1024**3:.2f} GiB handover capacity; nothing new staged.")
+        write_log(f"{len(staged)} files fill the handover room of "
+                  f"{capacity / 1024**3:.2f} GiB; nothing new staged.")
         return 0
 
     staged_fps = {str(e.get("Fingerprint", "")).lower() for e in staged}

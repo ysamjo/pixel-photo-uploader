@@ -514,3 +514,83 @@ def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, mo
     batches.repair_batches(cfg, staged_file)
     assert copy.exists()
     assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]
+
+
+def _storage_report(cfg: dict, free_gib: float, age_seconds: float = 0.0,
+                    total_gib: float = 24.0) -> Path:
+    """Speicherbericht der Companion-App im Kontrollordner."""
+    observed = int((datetime.now(timezone.utc).timestamp() - age_seconds) * 1000)
+    path = Path(cfg["ControlRoot"]) / "pixel-storage.json"
+    path.write_text(json.dumps({
+        "version": 1, "observedAtEpochMs": observed,
+        "freeBytes": int(free_gib * 1024**3), "totalBytes": int(total_gib * 1024**3),
+        "warnLevel": "ok"}), encoding="utf-8")
+    return path
+
+
+def _one_gib_in_catalog(cfg: dict, catalog_file: Path, staged_file: Path) -> None:
+    (Path(cfg["SourceRoot"]) / "big.jpg").write_bytes(b"x" * 16)
+    store.save_catalog([{
+        "Fingerprint": "fp-big", "RelativePath": "big.jpg", "Size": str(1024**3),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    }], catalog_file)
+    store.save_staged([], staged_file)
+
+
+def test_freier_phonespeicher_begrenzt_die_handover_hart(tmp_path, monkeypatch):
+    """Bisher kannte der Server den freien Phonespeicher nicht: `ReserveGiB` stand nur
+    in der Konfiguration (BEFUNDE-DE.md §8). Jetzt bindet die gemeldete Zahl."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    cfg["BatchGiB"], cfg["ReserveGiB"] = 5.0, 1.5
+    _one_gib_in_catalog(cfg, catalog_file, staged_file)
+
+    # 2 GiB frei minus 1,5 GiB Reserve: fuer die 1-GiB-Datei ist kein Platz.
+    _storage_report(cfg, free_gib=2.0)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+    assert store.load_staged(staged_file) == []
+
+    # 8 GiB frei: jetzt bindet wieder die Batch-Kappe, die Datei passt.
+    _storage_report(cfg, free_gib=8.0)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+
+
+def test_veralteter_speicherbericht_legt_die_queue_nicht_still(tmp_path, monkeypatch):
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    cfg["BatchGiB"], cfg["ReserveGiB"] = 5.0, 1.5
+    _one_gib_in_catalog(cfg, catalog_file, staged_file)
+
+    _storage_report(cfg, free_gib=0.05, age_seconds=3600.0)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+
+
+def test_speicherbericht_ohne_verwertbare_zahlen_wird_ignoriert(tmp_path, monkeypatch):
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    cfg["BatchGiB"], cfg["ReserveGiB"] = 5.0, 1.5
+    _one_gib_in_catalog(cfg, catalog_file, staged_file)
+
+    # Uhrensprung nach vorn: ein Bericht aus der Zukunft ist keine Messung.
+    _storage_report(cfg, free_gib=0.05, age_seconds=-600.0)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+
+
+def test_speicherbericht_lesen_ist_geduldig_und_ehrlich(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    assert batches.pixel_storage(control) is None
+    report = control / "pixel-storage.json"
+    for broken in ("kein json", json.dumps([1, 2]), json.dumps({"version": 2}),
+                   json.dumps({"version": 1, "freeBytes": "viel"}),
+                   json.dumps({"version": 1, "freeBytes": 1, "totalBytes": 2,
+                               "observedAtEpochMs": None})):
+        report.write_text(broken, encoding="utf-8")
+        assert batches.pixel_storage(control) is None, broken
+    assert batches.pixel_storage(tmp_path / "fehlt") is None
+    report.write_text(json.dumps({
+        "version": 1, "freeBytes": 3 * 1024**3, "totalBytes": 24 * 1024**3,
+        "observedAtEpochMs": int(datetime.now(timezone.utc).timestamp() * 1000),
+        "warnLevel": "warn", "partialCount": 2, "partialBytes": 4096}), encoding="utf-8")
+    parsed = batches.pixel_storage(control)
+    assert parsed["freeBytes"] == 3 * 1024**3
+    assert parsed["fresh"] is True
+    assert parsed["warnLevel"] == "warn"
+    assert parsed["partialCount"] == 2

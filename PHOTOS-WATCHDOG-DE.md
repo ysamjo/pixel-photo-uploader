@@ -26,10 +26,30 @@ respektiert. Verbindungsabbrüche, Host-Schlaf und Uhrsprünge gelten nicht als 
 **Keine Geräteneustarts, kein Cache-/Datenlöschen, kein Root auf dem Pixel.** Dieses
 Pixel braucht eine spezielle Kabel-/Stromversorgung; Reboot nur nach ausdrücklicher Freigabe.
 
+## Speicherdiagnose ab 3.3.21
+
+Der Wächter misst bei jeder Runde zusätzlich den Telefonspeicher und die bekannten
+Fresser in **einem** ADB-Aufruf: `df -k /data`, dazu `du -sk` für die Resilio-Freigabe
+und ihre Unterordner, Googles externen App-Anteil, `.thumbnails`, `LOST.DIR`,
+`.trashed` und `/data/local/tmp`. Außerdem zählt er die Resilio-Teilkopien (`*.!sync`)
+samt Bytes und die liegen gebliebenen `.receipt-*.tmp`.
+
+Alles steht unter `storage` in derselben Statusdatei und damit im Web-UI unter
+„Google-Fotos-Wächter" — die Frage „wohin ist der Platz gegangen" braucht damit kein
+Kabel mehr. Die Messung läuft in einem eigenen `try`: ein fehlgeschlagenes `du` ist
+kein Stillstand von Google Fotos und berührt das Neustartbudget nicht.
+
+Nicht messbar ohne Root ist `/data/data/com.google.android.apps.photos` — deshalb der
+externe Anteil. Die Teilkopien werden per `find -exec du` gesucht, **nicht** per Glob:
+ein Glob auf feste Tiefe meldete im Test still 0 Byte, weil sie unter
+`staging/Batches/<id>/…` liegen. Wer das Skript ändert, prüft es durch `sh -n` und
+lässt es auf einem Testbaum laufen — der Test dafür steht in
+`tests/test_photos_watchdog.py`.
+
 ## ZimaOS-Einrichtung
 
 ```bash
-docker build -t pixel-photo-uploader:3.3.20 .
+docker build -t pixel-photo-uploader:3.3.21 .
 docker compose -f docker-compose.yml up -d
 ```
 

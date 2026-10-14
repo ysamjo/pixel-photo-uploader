@@ -17,3 +17,7 @@
 11. Bildschirm dunkel oder Pixel gesperrt: Es darf nichts freigegeben werden; die App wartet und holt Google Fotos erst, wenn das Fenster sichtbar ist.
 12. Erst danach einen 5–20-GB-Test aus der Server-Bibliothek durchführen.
 13. Google Fotos auf Englisch umstellen und Schritte 3–7 wiederholen: Die Automatik muss entweder weiterlaufen oder nach 30 Minuten mit Bildschirmtexten anhalten — lautloses Stehenbleiben ist ein Fehler.
+14. Speicherbericht prüfen: Spätestens nach fünf Minuten muss `control/pixel-storage.json` vorliegen und der Uploader den Wert im Web-UI unter „Pixel-Speicher" zeigen. Der freie Speicher in der App muss zu `df /data` per ADB passen.
+15. Fehlt `pixel-storage.json`, muss der Uploader weiterarbeiten wie vor 3.3.21 (nur die Batchgröße bindet) — ein fehlender Bericht darf die Queue nie stilllegen. Ebenso ein Bericht, der älter als 30 Minuten ist.
+16. Teilkopie aufräumen: Eine Übertragung abbrechen, damit eine `*.!sync`-Datei liegen bleibt. Unter 3 GiB frei und nach über einer Stunde Unberührtheit muss die App sie freigeben und im Bericht als freigegeben ausweisen. Bei einer **laufenden** Übertragung darf sie nichts anfassen.
+17. Reserve prüfen: `ReserveGiB` im Web-UI hochsetzen, bis `freeBytes - ReserveGiB` kleiner als die Batchgröße ist. Der Uploader muss den Pass mit der Zeile „handover limited to …" protokollieren und weniger nachlegen als die Batch-Kappe erlaubt.

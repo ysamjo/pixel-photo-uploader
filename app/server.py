@@ -33,7 +33,7 @@ def _esc(value) -> str:
 
 def overview(cfg: dict) -> dict:
     """Status numbers without printing (shared by CLI and web)."""
-    from .batches import backup_timeout_hours, batch_gib_clamped
+    from .batches import backup_timeout_hours, batch_gib_clamped, pixel_storage
     from .store import (blocked_fingerprints, due_unverified, load_catalog,
                         load_completion_sets, load_staged, unverified_fingerprints)
     from .sync import deep_rescan_days
@@ -61,9 +61,14 @@ def overview(cfg: dict) -> dict:
         "DeepRescanDays": str(int(deep_rescan_days(cfg))),
         "BackupTimeoutHours": f"{backup_timeout_hours(cfg):g}",
     }
+    # Ohne den Speicherbericht kennt der Server den freien Phonespeicher nicht und kann
+    # die Handover-Kapazitaet nur ueber die Batchgroesse naehern.
+    storage = pixel_storage(Path(str(cfg.get("ControlRoot", ""))))
     return {
         "version": APP_VERSION,
         "configured": True,
+        "pixel_storage": storage,
+        "reserve_gib": float(cfg.get("ReserveGiB", 0.0)),
         "archive": setup["SourceRoot"],
         "staging": setup["StagingRoot"],
         "control": setup["ControlRoot"],
@@ -97,16 +102,24 @@ def watchdog_status() -> dict:
             raise ValueError("Invalid watchdog status")
         if time.time() - float(status.get("observedAt", 0)) > 150:
             return {"state": "stale", "message": "Der Wächter hat seit mehr als 150 Sekunden keine Meldung geliefert."}
-        return {k: status[k] for k in ("state", "message", "observedAt", "remaining", "cooldownUntil") if k in status}
+        return {k: status[k] for k in ("state", "message", "observedAt", "remaining",
+                                       "cooldownUntil", "storage") if k in status}
     except (OSError, ValueError, TypeError):
         return {"state": "unavailable", "message": "Google-Fotos-Wächter noch nicht verbunden."}
 
 
 def _gib(value) -> str:
+    # Kleine Betraege in KiB/MiB: "0.00 GiB" fuer freigegebene 4 KiB las sich wie
+    # "nichts passiert" — genau die Zahl, die eine Aufraeumaktion belegen soll.
     try:
-        return f"{float(value) / 1024**3:.2f} GiB"
+        number = float(value)
     except (TypeError, ValueError):
         return "-"
+    if abs(number) < 1024 ** 2:
+        return f"{number / 1024:.1f} KiB"
+    if abs(number) < 1024 ** 3:
+        return f"{number / 1024 ** 2:.1f} MiB"
+    return f"{number / 1024**3:.2f} GiB"
 
 
 def _number(value) -> str:
@@ -122,6 +135,57 @@ def _num(value) -> str:
     except (TypeError, ValueError):
         return "-"
     return str(int(number)) if number.is_integer() else f"{number:g}"
+
+
+def _ago(seconds) -> str:
+    try:
+        value = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        return "unbekannter Zeit"
+    if value < 90:
+        return f"{int(value)} s"
+    if value < 5400:
+        return f"{int(value // 60)} min"
+    return f"{value / 3600:.1f} h"
+
+
+def _storage_section(info: dict) -> str:
+    """Freier Telefonspeicher des Pixels, wie die Companion-App ihn meldet.
+
+    Der Bericht ist die einzige Quelle fuer diese Zahl: der Uploader hat kein ADB.
+    Fehlt er, sagt die Seite das ausdruecklich — eine stillschweigend angenommene
+    Kapazitaet war genau der Fehler, den der Puffer beheben soll.
+    """
+    storage = info.get("pixel_storage")
+    if not storage:
+        return ("<h2>Pixel-Speicher</h2><section><p class=\"note\">Noch kein "
+                "Speicherbericht vom Pixel. Die Companion-App ab 1.2.9 schreibt ihn nach "
+                "<code>control/pixel-storage.json</code>, sobald sie auf dem Telefon l\u00e4uft."
+                "</p></section>")
+    level = str(storage.get("warnLevel") or "")
+    if not storage.get("fresh"):
+        state, css = "veraltet", "busy"
+    elif level == "floor":
+        state, css = "kein neuer Batch", "busy"
+    elif level == "warn":
+        state, css = "wird knapp", "busy"
+    else:
+        state, css = "ok", "idle"
+    residues = (f"Resilio-Teilkopien: {_number(storage.get('partialCount'))} "
+                f"({_gib(storage.get('partialBytes'))}) &middot; "
+                f"eigene Temp-Reste: {_number(storage.get('tempCount'))} "
+                f"({_gib(storage.get('tempBytes'))}) &middot; "
+                f"zuletzt freigegeben: {_gib(storage.get('reclaimedBytes'))}")
+    return (
+        "<h2>Pixel-Speicher</h2><section>"
+        f"<p>Frei: {_esc(_gib(storage.get('freeBytes')))} von "
+        f"{_esc(_gib(storage.get('totalBytes')))} "
+        f"<span class=\"pill {css}\">{_esc(state)}</span></p>"
+        f"<p class=\"note\">{residues}</p>"
+        f"<p class=\"note\">Gemeldet vor {_esc(_ago(storage.get('ageSeconds')))} "
+        f"&middot; Reserve: {_esc(_num(info.get('reserve_gib')))} GiB. Der Uploader h\u00e4lt "
+        "diese Reserve frei und legt dar\u00fcber hinaus nichts nach.</p></section>"
+    )
 
 
 PAGE_STYLE = """
@@ -155,6 +219,7 @@ SETUP_FIELDS = (
     ("DropboxRoot", "Dropbox-Ordner (leer = kein Import)", False),
     ("OneDriveRoot", "OneDrive-Ordner (leer = kein Import)", False),
     ("BatchGiB", "Batch-groesse in GiB (0,25 bis 10)", False),
+    ("ReserveGiB", "Reserve auf dem Pixel in GiB (0 bis 10)", False),
     ("StableSeconds", "Stabilitaet in Sekunden", False),
     ("RescanMinutes", "Grundabgleich alle Minuten", False),
     ("DeepRescanDays", "Vollabgleich alle Tage", False),
@@ -164,7 +229,7 @@ SETUP_DEFAULTS = {
     "SourceRoot": "/data/archive", "StagingRoot": "/data/staging",
     "ControlRoot": "/data/control", "InboxRoot": "/data/inbox",
     "DropboxRoot": "/data/dropbox", "OneDriveRoot": "/data/onedrive",
-    "BatchGiB": "5", "StableSeconds": "120", "RescanMinutes": "360",
+    "BatchGiB": "5", "ReserveGiB": "1.5", "StableSeconds": "120", "RescanMinutes": "360",
     "DeepRescanDays": "7", "BackupTimeoutHours": "72",
 }
 
@@ -196,6 +261,7 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"Vollabgleich: alle {_num(info.get('deep_rescan_days'))} Tage &middot; "
             f"Stabilitaet: {_number(info.get('stable_seconds'))} s &middot; "
             f"Batch: {_num(info.get('batch_gib'))} GiB &middot; "
+            f"Reserve: {_num(info.get('reserve_gib'))} GiB &middot; "
             f"Abbruch: nach {_num(info.get('backup_timeout_hours'))} h ohne Beleg"
         )
         status_section = (
@@ -249,8 +315,16 @@ def render_page(info: dict, log_lines=(), message: str = "",
     pixel_section = (f"<h2>Pixel meldet</h2><section><pre>{_esc(pixel)}</pre></section>"
                      if pixel else "")
     watchdog = info.get("photos_watchdog") or {}
-    watchdog_section = (f'<h2>Google-Fotos-Wächter</h2><section><p>{_esc(watchdog.get("message"))}</p></section>'
-                        if watchdog else "")
+    watchdog_hogs = ((watchdog.get("storage") or {}).get("hogs") or {}) if watchdog else {}
+    hogs_line = ""
+    if watchdog_hogs:
+        hogs_line = ("<p class=\"note\">Auf dem Gerät gemessen: "
+                     + " &middot; ".join(f"{_esc(name)} {_esc(_gib(size))}"
+                                         for name, size in watchdog_hogs.items())
+                     + "</p>")
+    watchdog_section = (f'<h2>Google-Fotos-Wächter</h2><section><p>{_esc(watchdog.get("message"))}</p>'
+                        f'{hogs_line}</section>' if watchdog else "")
+    storage_section = _storage_section(info) if info.get("configured") else ""
     return (
         "<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\">"
         f"<title>Pixel Photo Uploader</title>{refresh}"
@@ -259,7 +333,7 @@ def render_page(info: dict, log_lines=(), message: str = "",
         f"<p class=\"sub\">v{_esc(info.get('version'))} &middot; App + Resilio "
         f"&middot; <span class=\"pill {css}\">{_esc(state)}</span></p>"
         f"{note}{status_section}{actions}{setup}"
-        f"{watchdog_section}{pixel_section}"
+        f"{storage_section}{watchdog_section}{pixel_section}"
         "<h2>Letzte Meldungen</h2><section>"
         f"<pre>{_esc(log)}</pre></section>"
         "</body></html>"

@@ -21,6 +21,8 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 - Companion 1.2.7 setzt vorübergehende Fehler automatisch nach 5/15/30 Minuten zurück; der laufende Batch und seine Timeout-Uhr bleiben erhalten. Fehlende Voraussetzungen und 72-h-Timeout benötigen weiterhin einen Eingriff.
 
+- Der Telefonspeicher ist die harte Kante der Kette. Companion 1.2.9 misst ihn, warnt unter 3 GiB, gibt unter 1 GiB keinen neuen Batch mehr frei, räumt unter Druck nur Reste frei (Resilio-Teilkopien `*.!sync`, eigene `.receipt-*.tmp`, beide älter als eine Stunde) und schreibt `control/pixel-storage.json`. `select_and_stage_batch()` liest darin `freeBytes` und bindet die Handover-Kapazität zusätzlich an `freeBytes - ReserveGiB`; ein Bericht älter als 30 min gilt als Stand von gestern und wird ignoriert. Die Schlüsselnamen sind der Vertrag mit `StorageReport.java` — beide Seiten zusammen ändern.
+
 - Optionaler ADB-Wächter: `app.photos_watchdog`, eigener Docker-Dienst `photos-watchdog` aus demselben Uploader-Image. Ein Google-Fotos-Neustart pro Batch nach 30 Minuten ohne Fortschritt; danach Wartezeit und sichtbare Warnung. **Niemals das Pixel rebooten ohne ausdrückliche Freigabe:** Kabel/Stromversorgung und WLAN-ADB sind speziell. Liveprüfung benötigt ADB zum Pixel 1; siehe `PHOTOS-WATCHDOG-DE.md`.
 
 ## Konventionen
@@ -39,7 +41,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 ```bash
 .venv/bin/python -m pytest           # kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.20 .
+docker build -t pixel-photo-uploader:3.3.21 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 

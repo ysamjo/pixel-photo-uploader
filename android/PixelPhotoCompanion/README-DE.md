@@ -1,4 +1,4 @@
-# Pixel Photo Companion 1.2.8
+# Pixel Photo Companion 1.2.9
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
 
@@ -20,12 +20,39 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - vergleicht den realen Dateibestand und zählt nur tatsächlich entfernte Dateien als abgeschlossen — maßgeblich ist der Bestand, nicht wer den Knopf gedrückt hat;
 - hält eine Absage auseinander: meldet Google Fotos zweimal „Nichts freizugeben“, übergibt die Liste als Absage-Rückbeleg, bietet dieselben Inhalte nicht erneut an und verbucht ihre spätere Löschung nicht als Google-Freigabe — die gibt nämlich der Server selbst über Resilio frei;
 - schreibt einen atomaren JSON-Rückbeleg in den Resilio-Kontrollordner, auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist;
+- misst bei jeder Runde den freien Gerätespeicher, warnt unter 3 GiB, übergibt unter 1 GiB keinen neuen Batch mehr und schreibt den Stand als `pixel-storage.json` in den Kontrollordner, damit der Server seine Übergabekapazität auf den echten Telefonspeicher binden kann;
+- räumt unter Speicherdruck abgebrochene Resilio-Teilkopien (`*.!sync`) und liegen gebliebene eigene `.receipt-*.tmp` frei, die eine Stunde unberührt liegen — eine laufende Übertragung schreibt ständig und ist nie betroffen;
 - spiegelt ihr Protokoll zusätzlich nach `<Kontrollordner>/companion-log.txt`, damit der Server im Web-UI unter „Pixel meldet" zeigt, worauf die Automatik wartet — ohne Kabel;
 - läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war; auch nach einem App-Update weckt die Bedienungshilfe die Überwachung selbst.
 
 ## Fortschrittswächter ab 1.2.8
 
-Die App stellt den verbleibenden Dateizähler für einen externen ADB-Wächter bereit und zeigt dessen Warnungen in der App und Benachrichtigung. Der Wächter kann nach 30 Minuten ohne Fortschritt ausschließlich Google Fotos einmal pro Batch neu starten. Danach folgen bei erneutem Stillstand eine Stunde Wartezeit und eine Warnung. Die App selbst erhält keine neuen Berechtigungen. Einrichtung: [PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md). Version 1.2.8 ist gebaut und getestet, aber noch nicht auf dem Pixel installiert.
+Die App stellt den verbleibenden Dateizähler für einen externen ADB-Wächter bereit und zeigt dessen Warnungen in der App und Benachrichtigung. Der Wächter kann nach 30 Minuten ohne Fortschritt ausschließlich Google Fotos einmal pro Batch neu starten. Danach folgen bei erneutem Stillstand eine Stunde Wartezeit und eine Warnung. Die App selbst erhält keine neuen Berechtigungen. Einrichtung: [PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md). Version 1.2.9 ist gebaut und getestet, aber noch nicht auf dem Pixel installiert; die Speichermessung ist damit ebenfalls noch nicht live geprüft.
+
+## Speicherwächter ab 1.2.9
+
+Der Telefonspeicher ist die harte Kante der ganzen Kette: ist er zu, kann Resilio keinen Batch
+mehr anlegen, egal wie leer die überwachten Ordner sind. Bis 1.2.8 war er auf dem Gerät
+nirgends sichtbar und auf der NAS gar nicht — der Uploader konnte nur über `BatchGiB` raten.
+
+- Die App liest bei jeder Runde den verfügbaren Speicher (verfügbar, nicht „frei": der
+  Wurzel-Vorbehalt ist für Apps nicht nutzbar) und zeigt ihn unter **Aktueller Bestand**.
+- Unter **3 GiB** warnt sie sichtbar in Status und Vordergrundbenachrichtigung. Unter **1 GiB**
+  übergibt sie keinen neuen Batch mehr und meldet „Warte auf freien Speicher"; laufende
+  Rückbelege und Freigaben laufen unverändert weiter.
+- Alle fünf Minuten schreibt sie `pixel-storage.json` in den Kontrollordner (atomar, wie ein
+  Rückbeleg). Der Uploader liest darin `freeBytes` und hält zusätzlich `ReserveGiB` frei —
+  ein Bericht, der älter als 30 Minuten ist, gilt als Stand von gestern und wird ignoriert.
+- Unter Speicherdruck räumt sie außerdem auf, was niemand mehr anfasst und trotzdem Platz
+  belegt: **Resilio-Teilkopien** (`name.jpg.!sync`, Reste abgebrochener Übertragungen, die der
+  Mediascanner bewusst überspringt) und eigene liegen gebliebene `.receipt-*.tmp`. Gelöscht wird
+  nur, was eine **Stunde** nicht angefasst wurde — eine laufende Übertragung schreibt ständig
+  und bleibt damit unberührt. Die Resilio-Metadaten (`.sync`) sind tabu.
+
+Nicht messbar ohne Root: Googles interner App-Cache unter `/data/data/<paket>`. Der
+ADB-Wächter meldet deshalb dessen externen Anteil und die übrigen bekannten Fresser
+(`.thumbnails`, `LOST.DIR`, `.trashed`, `Android/media`, `/data/local/tmp`) — siehe
+[PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md).
 
 ## Automatische Erholung ab 1.2.7
 

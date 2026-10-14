@@ -249,9 +249,17 @@ public class MainActivity extends Activity {
         int refused = AppState.refusedTokens(this).size();
         long updated = prefs.getLong("updatedAt", 0L);
         String updatedText = updated == 0 ? "noch nie" : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(new Date(updated));
+        // Der Geraetespeicher ist die harte Kante der ganzen Kette: ist er zu, kann Resilio
+        // keinen Batch mehr anlegen, egal wie leer die ueberwachten Ordner sind.
+        long freeBytes = prefs.getLong("deviceFreeBytes", 0L);
+        long totalBytes = prefs.getLong("deviceTotalBytes", 0L);
+        String storageText = totalBytes > 0L
+                ? DeviceStorage.describe(freeBytes, totalBytes) : "noch nicht gemessen";
         counters.setText(String.format(Locale.GERMANY,
-                "Stabile Dateien in überwachten Ordnern: %,d\nGröße: %.2f GiB\nSeit Installation lokal freigegeben: %,d\nAbgelehnt und an den Server übergeben: %,d\nLetzte Aktualisierung: %s",
-                visible, bytes / 1073741824.0, completed, refused, updatedText));
+                "Stabile Dateien in überwachten Ordnern: %,d\nGröße: %.2f GiB\nTelefonspeicher: %s\nSeit Installation lokal freigegeben: %,d\nAbgelehnt und an den Server übergeben: %,d\nLetzte Aktualisierung: %s",
+                visible, bytes / 1073741824.0, storageText, completed, refused, updatedText));
+        counters.setTextColor(totalBytes > 0L && DeviceStorage.below(freeBytes, DeviceStorage.WARN_GIB)
+                ? Color.rgb(185, 28, 28) : Color.rgb(35, 42, 52));
         log.setText(AppState.readLogTail(this, 80));
         start.setEnabled(!enabled || !running);
         pause.setEnabled(enabled || running);

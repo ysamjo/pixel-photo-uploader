@@ -33,11 +33,16 @@ public class BackupMonitorService extends Service {
     private static final String CHANNEL_ID = "backup_monitor";
     private static final long POLL_MILLIS = 30_000L;
     private static final long STABLE_MILLIS = 120_000L;
+    // Der Speicherbericht geht durch dieselbe Resilio-Freigabe wie die Rueckbelege; im
+    // 30-s-Takt waere das unnoetiger Sync-Verkehr. Fuenf Minuten sind fuer eine
+    // Kapazitaetskante frisch genug.
+    private static final long STORAGE_REPORT_MILLIS = 5 * 60_000L;
 
     private HandlerThread workerThread;
     private Handler worker;
     private MediaFolderScanner scanner;
     private PowerManager.WakeLock wakeLock;
+    private DeviceStorage.Usage lastUsage;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -87,6 +92,22 @@ public class BackupMonitorService extends Service {
         if (!prefs.getBoolean("safetyAccepted", false)) {
             update("Sicherheitsbestätigung fehlt");
             return;
+        }
+
+        // Speicherstand zuerst und phasenunabhaengig: er ist auch waehrend einer laufenden
+        // Handreichung wichtig und speist Warnung sowie die Kapazitaetskante des Servers.
+        long now = System.currentTimeMillis();
+        lastUsage = DeviceStorage.probe(DeviceStorage.measurementPath(this));
+        if (lastUsage != null && lastUsage.measurable()) {
+            prefs.edit()
+                    .putLong("deviceFreeBytes", lastUsage.freeBytes)
+                    .putLong("deviceTotalBytes", lastUsage.totalBytes)
+                    .putLong("deviceStorageAt", now)
+                    .apply();
+            if (now - prefs.getLong("storageReportAt", 0L) >= STORAGE_REPORT_MILLIS) {
+                prefs.edit().putLong("storageReportAt", now).apply();
+                reportStorage(prefs, lastUsage, now);
+            }
         }
 
         String phase = AppState.phase(this);
@@ -145,6 +166,17 @@ public class BackupMonitorService extends Service {
             return;
         }
 
+        if (lastUsage != null && DeviceStorage.below(lastUsage.freeBytes, DeviceStorage.FLOOR_GIB)) {
+            // Kein neuer Batch auf ein volles Telefon: Resilio kann ihn nicht mehr ganz
+            // anlegen, und ein halber Batch ist fuer Google Fotos wertlos. Der gemeldete
+            // Speicherstand bleibt stehen, damit der Server die Ursache sieht. Der
+            // Warntext ist hier gleich die ganze Meldung — update() verdoppelt ihn nicht.
+            String warning = DeviceStorage.warning(lastUsage);
+            update(warning != null ? warning
+                    : "Warte auf freien Speicher: " + DeviceStorage.describe(lastUsage));
+            return;
+        }
+
         List<String> offerable = AppState.withoutRefused(this, stable.paths);
         if (offerable.isEmpty()) {
             update("Nur abgelehnte Dateien liegen noch – warte auf den Server");
@@ -198,6 +230,39 @@ public class BackupMonitorService extends Service {
                 "Vorübergehenden Fehler automatisch zurückgesetzt; Sicherung wird erneut geprüft.");
         if (hasBatch) openGooglePhotos();
         return !AppState.PHASE_ERROR.equals(AppState.phase(this));
+    }
+
+    /**
+     * Aufraeumen und Bericht in einem Zug.
+     *
+     * Geloescht wird nur unter Druck: die Freigabe gehoert Resilio, solange genug Platz
+     * ist, hat die App dort nichts zu suchen. Alte Teilkopien ({@code .!sync}) und
+     * haengengebliebene eigene Temp-Reste sind der einzige Speicher, den die App
+     * ueberhaupt verantwortet.
+     */
+    private void reportStorage(SharedPreferences prefs, DeviceStorage.Usage usage, long now) {
+        StorageResidue.Reclaimed reclaimed = null;
+        if (DeviceStorage.below(usage.freeBytes, DeviceStorage.WARN_GIB)) {
+            reclaimed = StorageResidue.reclaim(AppState.folderPaths(this), now);
+            if (reclaimed.bytes > 0) {
+                AppState.log(this, reclaimed.count() + " abgebrochene Reste freigegeben ("
+                        + DeviceStorage.gib(reclaimed.bytes) + ").");
+                usage = DeviceStorage.probe(DeviceStorage.measurementPath(this));
+                lastUsage = usage;
+                if (usage != null && usage.measurable()) {
+                    prefs.edit().putLong("deviceFreeBytes", usage.freeBytes)
+                            .putLong("deviceTotalBytes", usage.totalBytes).apply();
+                }
+            }
+        }
+        if (usage == null || !usage.measurable()) return;
+        try {
+            File written = StorageReport.write(this, usage,
+                    StorageResidue.scan(AppState.folderPaths(this)), reclaimed);
+            prefs.edit().putString("lastStorageReport", written.getAbsolutePath()).apply();
+        } catch (Exception error) {
+            AppState.log(this, "Speicherbericht konnte nicht geschrieben werden: " + error.getMessage());
+        }
     }
 
     private void verifyCleanup() {
@@ -359,6 +424,10 @@ public class BackupMonitorService extends Service {
     }
 
     private void update(String text) {
+        String storageWarning = DeviceStorage.warning(lastUsage);
+        if (storageWarning != null && !text.startsWith("Telefonspeicher")) {
+            text = storageWarning + " " + text;
+        }
         // Der ADB-Waechter besitzt das Prozess-Neustartrecht; die App zeigt seine Warnung.
         File watchdog = new File(getFilesDir(), "photos-watchdog-status.json");
         if (watchdog.isFile()) {
