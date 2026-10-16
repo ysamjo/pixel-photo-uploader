@@ -216,6 +216,11 @@ public class PhotosAccessibilityService extends AccessibilityService {
             return;
         }
 
+        if (containsAny(all, "nothing to free up", "nichts freizugeben", "cannot free up space", "no items to free up")) {
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            return;
+        }
+
         // Weder aktiv noch abgeschlossen: früher klickte die Automatik hier bis zum
         // 72-Stunden-Limit nur das Profil an/aus, ohne je Bildschirmtexte zu melden.
         // Nach der Karenz zählt Stillstand als Befund — mit den gelesenen Texten im Fehler.
@@ -286,6 +291,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 "keinen speicherplatz freigeben", "no space to free up", "cannot free up space",
                 "can't free up space", "no items to free up")) {
             int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
+            performGlobalAction(GLOBAL_ACTION_BACK);
             if (refused >= NOTHING_TO_FREE_ROUNDS) {
                 List<String> stuck = new ArrayList<>();
                 for (String line : prefs.getString("batchPaths", "").split("\\n")) {

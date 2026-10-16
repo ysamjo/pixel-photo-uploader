@@ -152,20 +152,25 @@ public class BackupMonitorService extends Service {
             update("Nur abgelehnte Dateien liegen noch – warte auf den Server");
             return;
         }
+        String newPaths = join(offerable);
+        List<String> currentList = split(prefs.getString("batchPaths", ""));
+        boolean isNewBatch = currentList.isEmpty() || !new HashSet<>(currentList).equals(new HashSet<>(offerable));
         long offerBytes = 0;
         for (String path : offerable) offerBytes += new File(path).length();
 
-        scanner.mediaScan(offerable);
-        prefs.edit()
-                .putString("batchPaths", join(offerable))
+        SharedPreferences.Editor edit = prefs.edit()
+                .putString("batchPaths", newPaths)
                 .putLong("batchBytes", offerBytes)
-                .putLong("batchStartedAt", System.currentTimeMillis())
                 .putBoolean("sawActiveBackup", false)
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
-                .putInt("nothingToFreeRounds", 0)
-                .putInt("freeUpRound", 0)
-                .apply();
+                .putInt("freeUpRound", 0);
+        if (isNewBatch) {
+            scanner.mediaScan(offerable);
+            edit.putLong("batchStartedAt", System.currentTimeMillis())
+                    .putInt("nothingToFreeRounds", 0);
+        }
+        edit.apply();
         AppState.phase(this, AppState.PHASE_WAIT_BACKUP,
                 String.format(Locale.GERMANY, "%d stabile Dateien an Google Fotos übergeben.", offerable.size()));
         openGooglePhotos();
