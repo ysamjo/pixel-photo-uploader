@@ -514,3 +514,24 @@ def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, mo
     batches.repair_batches(cfg, staged_file)
     assert copy.exists()
     assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]
+
+
+def test_repair_erkennt_beschaedigte_oder_leere_dateien(tmp_path, monkeypatch):
+    """Eine 0-Byte- oder abweichende Kopie im Batch ist keine Freigabe, sondern
+    eine fehlerhafte Datei. Sie wird wie eine fehlende behandelt und nach der Frist
+    aus dem Archiv ersetzt."""
+    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    batch = batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
+    copy = batch / staged[0]["StagedName"]
+    copy.write_bytes(b"")  # Truncate to 0 bytes
+
+    batches.repair_batches(cfg, staged_file)
+    assert copy.stat().st_size == 0
+    assert store.load_staged(staged_file)[0]["MissingSinceUtc"]
+
+    _missing_since(staged_file, "fp-a.jpg", batches.REPAIR_GRACE_SECONDS + 1)
+    batches.repair_batches(cfg, staged_file)
+    assert copy.stat().st_size == int(staged[0]["Size"])
+    assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]
+

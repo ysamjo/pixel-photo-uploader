@@ -50,9 +50,9 @@ Alle Zahlen stehen in deutscher Schreibweise (Punkt als Tausender-, Komma als De
 
 ## Unbeaufsichtigter Betrieb auf dem Pixel
 
-Der optionale [Google-Fotos-Wächter](PHOTOS-WATCHDOG-DE.md) misst echten Sendeverkehr und den Restzähler, startet nach 30 Minuten Stillstand nur Google Fotos einmal pro Batch neu und meldet anhaltende Ausfälle nach einer Stunde Wartezeit. Kein Geräteneustart. Companion 1.2.8 zeigt die Warnungen auf dem Pixel. Der Wächter läuft auf ZimaOS als Docker-Dienst; Liveprüfung und Installation der Companion-Erweiterung benötigen ADB zum Pixel 1.
+Der optionale [Google-Fotos-Wächter](PHOTOS-WATCHDOG-DE.md) misst echten Sendeverkehr und den Restzähler, startet nach 30 Minuten Stillstand nur Google Fotos einmal pro Batch neu und meldet anhaltende Ausfälle nach einer Stunde Wartezeit. Kein Geräteneustart. Companion 1.2.9 zeigt die Warnungen auf dem Pixel und leert automatisch den Resilio-Papierkorb (`.sync/Archive`), um ein Vollaufen des 24-GiB-Telefonspeichers zu verhindern. Der Wächter läuft auf ZimaOS als Docker-Dienst.
 
-Companion 1.2.7 erholt sich automatisch von vorübergehenden Fehlern (Wiederholung nach 5/15/30 Minuten), ohne den laufenden Batch neu zu scannen oder dessen 72-Stunden-Frist zu verlängern. Deaktivierte Sicherung, voller Kontospeicher, fehlendes Google Fotos und das 72-Stunden-Limit erfordern einen Eingriff. Das Pixel bleibt entsperrt am Ladegerät; Companion, Google Fotos und Resilio sollten von der Akkuoptimierung ausgenommen sein. Details und Android-Prüfbefehle stehen in [android/PixelPhotoCompanion/README-DE.md](android/PixelPhotoCompanion/README-DE.md).
+Companion erholt sich automatisch von vorübergehenden Fehlern (Wiederholung nach 5/15/30 Minuten), ohne den laufenden Batch neu zu scannen oder dessen 72-Stunden-Frist zu verlängern. Deaktivierte Sicherung, voller Kontospeicher, fehlendes Google Fotos und das 72-Stunden-Limit erfordern einen Eingriff. Das Pixel bleibt entsperrt am Ladegerät; Companion, Google Fotos und Resilio sollten von der Akkuoptimierung ausgenommen sein. Details und Android-Prüfbefehle stehen in [android/PixelPhotoCompanion/README-DE.md](android/PixelPhotoCompanion/README-DE.md).
 
 ## Paketinhalt
 

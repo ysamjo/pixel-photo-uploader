@@ -400,6 +400,13 @@ def migrate_refusal_blocks(blocked_file: Path | None = None,
                   "their archive copies remain and no Pixel space is held.", "WARN")
     return len(migrated)
 
+def _is_intact(path: Path, expected_size: int) -> bool:
+    try:
+        return path.is_file() and (expected_size <= 0 or path.stat().st_size == expected_size)
+    except OSError:
+        return False
+
+
 def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
     staged_file = staged_file or default_staged_path()
     staged = load_staged(staged_file)
@@ -415,7 +422,8 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         d = batch_dir(staging_root, batch_id)
         for entry in entries:
             staged_p = d / str(entry.get("StagedName", ""))
-            if entry.get("State") == "Staged" and staged_p.is_file():
+            expected_size = int(entry.get("Size", 0) or 0)
+            if entry.get("State") == "Staged" and _is_intact(staged_p, expected_size):
                 if entry.pop("MissingSinceUtc", None) is not None:
                     changed = True
                 continue
@@ -429,7 +437,8 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
                 if not missing_since:
                     entry["MissingSinceUtc"] = now.isoformat()
                     changed = True
-                    write_log(f"Handover copy is gone; waiting for its receipt before "
+                    desc = "damaged" if staged_p.is_file() else "gone"
+                    write_log(f"Handover copy is {desc}; waiting for its receipt before "
                               f"restocking: {entry.get('RelativePath')}", "WARN")
                     continue
                 if (now - _parse_iso(str(missing_since))).total_seconds() < REPAIR_GRACE_SECONDS:

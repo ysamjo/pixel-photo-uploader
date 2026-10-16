@@ -464,3 +464,38 @@ Absage-Einträge wurden durch die bereits in 3.3.19 enthaltene Migration nach
 Der aktive Altbestand-Mount `/media/Data_1/Pictures:/data/archive/Altbestand:ro`
 ist erhalten (live `RW=false`). Ledger und vorherige Compose-Datei liegen vor dem
 Deploy gesichert unter `/DATA/AppData/pixel-photo-uploader/Archiv/state-vor-3.3.20-*.zip`.
+
+## 12. Resilio-Papierkorb (`.sync/Archive`) und Speichererschöpfung (`ENOSPC`) am 2026-10-14
+
+Messung am 2026-10-14, 16:03 CEST auf dem Upload-Pixel `FA69M0305152`:
+
+- **Befund:** Der interne Speicher (`/data`) war mit 24 GiB zu **100 % voll** (exakt 504 KB frei).
+- **Verursacher:** `/storage/emulated/0/DCIM/PixelSync/.sync/Archive` belegte **15,65 GiB**
+  mit 22 alten Batches (`20261013-*` bis `20261014-*`).
+- **Mechanismus:** Resilio Sync verschiebt serverseitig gelöschte Staging-Dateien standardmäßig
+  in seinen internen Papierkorb `.sync/Archive` (Standard-Haltezeit 30 Tage). Da das Archiv
+  auf der ZimaOS die eigentliche Sicherung hält und Staging-Dateien nach erfolgreicher
+  Abrechnung auf dem Telefon wertlos sind, führte das nach wenigen 5-GiB-Batches zum
+  vollständigen Überlauf des 24-GiB-Telefonspeichers.
+- **Fehlerkette:**
+  1. Batch `20261014-094055` (5,0 GiB / 922 Dateien) brach beim Resilio-Empfang bei Datei 585
+     mit `ENOSPC` (No space left on device) ab.
+  2. `MediaFolderScanner.completeBatch()` verlangt die exakte Datei- und Bytezahl aus
+     `_batch-manifest.json` (922 Dateien, 5.368.707.476 Bytes). Der unvollständige Batch wurde
+     daher ignoriert (`visibleFiles = 0`).
+  3. Companion meldete dauerhaft: `Bereit – warte auf neue Fotos`.
+  4. Server wartete auf den Rückbeleg der 922 Dateien und stellte keine neuen Batches bereit.
+  5. Android zeigte System-Warnungen („Storage space running out“) und blockierte den Bildschirm
+     mit `DeletionHelperActivity`.
+  6. Parallel war ADB über Wi-Fi nach einem Neustart nicht aktiv, wodurch `photos-watchdog`
+     auf ZimaOS keine Messung vornehmen konnte (`offline`).
+- **Konzept-Integration:**
+  1. **Companion 1.2.9:** `BackupMonitorService` leert den Inhalt von `.sync/Archive`
+     über `ResilioArchiveCleaner.purge()` in jedem Überwachungsdurchlauf (`tick()`) automatisch.
+     Damit sammelt sich kein Papierkorb mehr an, ohne dass manuelle Eingriffe in Resilio Sync nötig sind.
+  2. **Speicherfreigabe:** Durch die Bereinigung von `.sync/Archive` wurden 15 GiB sofort frei
+     (Speicherbelegung sank von 100 % auf 39 %).
+  3. **Wiederanlauf:** Resilio Sync synchronisierte die restlichen Dateien von `20261014-094055`
+     vollständig nach (924 Dateien, 5,25 GiB).
+  4. **WLAN-ADB:** `adb tcpip 5555` reaktiviert und ZimaOS-Schlüssel dauerhaft auf dem Pixel bestätigt.
+

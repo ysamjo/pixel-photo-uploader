@@ -70,3 +70,10 @@ docker compose -f docker-compose.local.yml up -d --build
   bekam einen zweiten, falschen Erfolgsbeleg. Die App ihrerseits merkt sich abgelehnte
   Content-Marken (`AppState.refusedTokens`, Schlüssel ist der Zwölfer-Fingerabdruck aus
   `NNNNNN-<fp12>.ext`) und bietet sie weder erneut an noch bucht ihre Löschung.
+- **Resilio-Papierkorb (`.sync/Archive`):** Resilio verschiebt serverseitig gelöschte
+  Staging-Batches standardmäßig in seinen lokalen Papierkorb `.sync/Archive` auf dem
+  Telefon (30 Tage Haltefrist). Auf einem Gerät mit nur ~24 GiB Nutzerspeicher führt das
+  nach 4–5 Batches unweigerlich zu vollem Speicher (`ENOSPC`), abgebrochenen Übertragungen
+  (`completeBatch()` schlägt fehl) und Upload-Stillstand. Companion leert `.sync/Archive`
+  daher automatisch in jedem Überwachungsdurchlauf.
+
