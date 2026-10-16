@@ -317,29 +317,35 @@ public class PhotosAccessibilityService extends AccessibilityService {
         // Wortlaut zurück — alte Wortlisten bleiben, weil die alte Fassung sie noch zeigt.
         if (findFreeUpDialogTitle(nodes) != null) {
             NodeText positive = findPositiveButton(nodes);
-            if (positive != null && System.currentTimeMillis() - lastActionAt >= 2_000L
-                    && click(positive.node)) {
+            if (positive != null) {
+                if (System.currentTimeMillis() - lastActionAt < 2_000L) return;
+                if (click(positive.node)) {
+                    lastActionAt = System.currentTimeMillis();
+                    prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 20_000L)
+                            .putInt("freeUpRound", 0).apply();
+                    AppState.phase(this, AppState.PHASE_VERIFY,
+                            "Freigabe über Dialog-Knopf bestätigt. Prüfe danach, welche überwachten Dateien Google Fotos wirklich entfernt hat.");
+                    return;
+                }
+            }
+        }
+        NodeText confirm = findConfirm(nodes);
+        if (confirm != null) {
+            if (System.currentTimeMillis() - lastActionAt < 2_000L) return;
+            if (click(confirm.node)) {
                 lastActionAt = System.currentTimeMillis();
                 prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 20_000L)
                         .putInt("freeUpRound", 0).apply();
                 AppState.phase(this, AppState.PHASE_VERIFY,
-                        "Freigabe über Dialog-Knopf bestätigt. Prüfe danach, welche überwachten Dateien Google Fotos wirklich entfernt hat.");
+                        "Freigabe bestätigt. Prüfe danach, welche überwachten Dateien Google Fotos wirklich entfernt hat.");
                 return;
             }
         }
-        NodeText confirm = findConfirm(nodes);
-        if (confirm == null) {
-            retryFreeUpNavigation(nodes, prefs);
-            return;
-        }
-        if (System.currentTimeMillis() - lastActionAt < 2_000L) return;
-        if (click(confirm.node)) {
-            lastActionAt = System.currentTimeMillis();
-            prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 20_000L)
-                    .putInt("freeUpRound", 0).apply();
-            AppState.phase(this, AppState.PHASE_VERIFY,
-                    "Freigabe bestätigt. Prüfe danach, welche überwachten Dateien Google Fotos wirklich entfernt hat.");
-        }
+        // Der Bestätigungsdialog braucht nach dem Klick auf „Speicherplatz freigeben“
+        // einen kurzen Moment zum Öffnen. Ein sofortiger Abbruch würde den Dialog
+        // per Zurück-Taste wieder schließen, bevor er gerendert ist.
+        if (System.currentTimeMillis() - lastActionAt < 3_000L) return;
+        retryFreeUpNavigation(nodes, prefs);
     }
 
     private static NodeText findFreeUpDialogTitle(List<NodeText> nodes) {
@@ -609,6 +615,8 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 .putBoolean("sawActiveBackup", false)
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
+                .putInt("nothingToFreeRounds", 0)
+                .putInt("freeUpRound", 0)
                 .apply();
         if (closeDialog) performGlobalAction(GLOBAL_ACTION_BACK);
         AppState.phase(this, AppState.PHASE_WAIT_BACKUP,

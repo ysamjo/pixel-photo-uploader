@@ -89,6 +89,8 @@ public class BackupMonitorService extends Service {
             return;
         }
 
+        purgeResilioArchive();
+
         String phase = AppState.phase(this);
         MediaFolderScanner.Snapshot stable = scanner.scanStable(STABLE_MILLIS);
         // Eine abgelehnte Datei, die nicht mehr liegt, ist vom Server abgerechnet: ihre Marke
@@ -161,6 +163,8 @@ public class BackupMonitorService extends Service {
                 .putBoolean("sawActiveBackup", false)
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
+                .putInt("nothingToFreeRounds", 0)
+                .putInt("freeUpRound", 0)
                 .apply();
         AppState.phase(this, AppState.PHASE_WAIT_BACKUP,
                 String.format(Locale.GERMANY, "%d stabile Dateien an Google Fotos übergeben.", offerable.size()));
@@ -428,6 +432,13 @@ public class BackupMonitorService extends Service {
         List<String> out = new ArrayList<>();
         for (String line : raw.split("\\n")) if (!line.trim().isEmpty()) out.add(line.trim());
         return out;
+    }
+
+    private void purgeResilioArchive() {
+        for (String folder : AppState.folderPaths(this)) {
+            File archiveDir = new File(folder, ".sync/Archive");
+            ResilioArchiveCleaner.purge(archiveDir);
+        }
     }
 
     @Override public void onDestroy() {

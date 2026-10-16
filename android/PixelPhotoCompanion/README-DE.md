@@ -1,4 +1,4 @@
-# Pixel Photo Companion 1.2.8
+# Pixel Photo Companion 1.2.9
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
 
@@ -8,6 +8,8 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
   (nur vollständig — `_batch-manifest.json` + `_batch-ready.txt` mit passender
   Datei- und Bytezahl), `control/` und Resilio-Reste (`.sync`, `.!sync`) werden
   ignoriert;
+- leert den Resilio-Papierkorb (`.sync/Archive`) bei jedem Überwachungsdurchlauf automatisch,
+  damit abgerechnete Batches den begrenzten Telefonspeicher (24 GiB) nicht vollaufen lassen;
 - akzeptiert Medien erst, wenn Größe und Änderungszeit zwei Minuten stabil sind;
 - meldet fertige Dateien beim Android-Medienscanner an;
 - öffnet Google Fotos und liest den sichtbaren Sicherungsstatus über einen Bedienungshilfedienst;
@@ -23,9 +25,18 @@ Android-Begleit-App für ein Google Pixel der ersten Generation, das als dedizie
 - spiegelt ihr Protokoll zusätzlich nach `<Kontrollordner>/companion-log.txt`, damit der Server im Web-UI unter „Pixel meldet" zeigt, worauf die Automatik wartet — ohne Kabel;
 - läuft als sichtbarer Vordergrunddienst und startet nach einem Pixel-Neustart wieder, wenn er vorher aktiv war; auch nach einem App-Update weckt die Bedienungshilfe die Überwachung selbst.
 
+## Resilio-Papierkorb-Bereinigung ab 1.2.9
+
+Resilio Sync speichert serverseitig gelöschte Staging-Batches standardmäßig in `.sync/Archive`
+mit 30 Tagen Vorhaltezeit. Auf einem dedizierten Gerät mit ca. 24 GiB Flash führt das nach 4–5
+Batches zur völligen Speichererschöpfung (`ENOSPC`). Companion 1.2.9 leert den Inhalt von
+`.sync/Archive` in jedem Überwachungsdurchlauf (alle 30 Sekunden) automatisch über
+`ResilioArchiveCleaner.purge()`. Der Ordner selbst bleibt bestehen; gelöschte Batches werden
+ohne Benutzereingriff sofort vom Flash entfernt.
+
 ## Fortschrittswächter ab 1.2.8
 
-Die App stellt den verbleibenden Dateizähler für einen externen ADB-Wächter bereit und zeigt dessen Warnungen in der App und Benachrichtigung. Der Wächter kann nach 30 Minuten ohne Fortschritt ausschließlich Google Fotos einmal pro Batch neu starten. Danach folgen bei erneutem Stillstand eine Stunde Wartezeit und eine Warnung. Die App selbst erhält keine neuen Berechtigungen. Einrichtung: [PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md). Version 1.2.8 ist gebaut und getestet, aber noch nicht auf dem Pixel installiert.
+Die App stellt den verbleibenden Dateizähler für einen externen ADB-Wächter bereit und zeigt dessen Warnungen in der App und Benachrichtigung. Der Wächter kann nach 30 Minuten ohne Fortschritt ausschließlich Google Fotos einmal pro Batch neu starten. Danach folgen bei erneutem Stillstand eine Stunde Wartezeit und eine Warnung. Die App selbst erhält keine neuen Berechtigungen. Einrichtung: [PHOTOS-WATCHDOG-DE.md](../../PHOTOS-WATCHDOG-DE.md). Version 1.2.9 ist gebaut, getestet und auf dem Pixel installiert.
 
 ## Automatische Erholung ab 1.2.7
 
