@@ -27,6 +27,7 @@ class Sample:
     batch: str
     tx_bytes: int
     remaining: int | None = None
+    batch_ids: tuple[str, ...] = ()
 
 
 def advance(state: dict, sample: Sample, now: float) -> tuple[dict, str]:
@@ -41,9 +42,15 @@ def advance(state: dict, sample: Sample, now: float) -> tuple[dict, str]:
         s.update(last_progress=now, tx_anchor=sample.tx_bytes, remaining=sample.remaining)
         if s.get("stage") == "cooldown":
             s["cooldown_until"] = now + COOLDOWN_SECONDS
+        if s.get("stage") == "alert":
+            s["stage"] = "restarted"
+            s.pop("alert_since", None)
     s["last_sample"] = now
     if sample.tx_bytes < s["tx_anchor"]:
         s.update(tx_anchor=sample.tx_bytes, last_progress=now)
+        if s.get("stage") == "alert":
+            s["stage"] = "restarted"
+            s.pop("alert_since", None)
     old_remaining = s.get("remaining")
     progressed = (sample.tx_bytes - s["tx_anchor"] >= MIN_TX_PROGRESS
                   or (sample.remaining is not None and old_remaining is not None
@@ -52,13 +59,18 @@ def advance(state: dict, sample: Sample, now: float) -> tuple[dict, str]:
         s["remaining"] = sample.remaining
     if progressed:
         s.update(last_progress=now, tx_anchor=sample.tx_bytes)
-        if s["stage"] == "cooldown":
+        if s["stage"] in ("cooldown", "alert"):
             s["stage"] = "restarted"
+        s.pop("alert_since", None)
+        s.pop("cooldown_until", None)
     if s["stage"] == "alert":
+        if "alert_since" not in s:
+            s["alert_since"] = now
         return s, "alert"
     if s["stage"] == "cooldown":
         if now >= s["cooldown_until"]:
             s["stage"] = "alert"
+            s["alert_since"] = now
             return s, "alert"
         return s, "cooldown"
     if now - s["last_progress"] >= STALL_SECONDS:
@@ -154,7 +166,9 @@ class Adb:
             remaining = None
         # Keine Dateinamen im Status; erst ein neuer Batch stellt das Neustartbudget wieder her.
         batch = batch_key(prefs)
-        return Sample(batch, tx, remaining)
+        batch_ids = tuple(sorted(set(re.findall(
+            r"/Batches/([^/\n]+)/", prefs["batchPaths"], re.IGNORECASE))))
+        return Sample(batch, tx, remaining, batch_ids)
 
     def restart_photos(self, expected_batch: str) -> None:
         self.connect()
@@ -202,14 +216,17 @@ def cycle(adb: Adb, state_path: Path, allow_restart: bool, now: float | None = N
             state, action = advance(state, sample, now)
             if action == "restart" and not allow_restart:
                 state["stage"] = "alert"
+                state["alert_since"] = now
                 action = "alert"
             save(state_path, state)
             if action == "restart":
                 adb.restart_photos(sample.batch)
         status = {"state": action, "message": MESSAGES[action], "observedAt": now,
+                  "batchIds": list(sample.batch_ids) if sample else [],
                   "txBytes": sample.tx_bytes if sample else None,
                   "remaining": sample.remaining if sample else None,
-                  "cooldownUntil": state.get("cooldown_until")}
+                  "cooldownUntil": state.get("cooldown_until"),
+                  "alertSince": state.get("alert_since")}
         adb.report(status)
     except (subprocess.SubprocessError, OSError, ValueError, ET.ParseError) as exc:
         status = {"state": "offline", "message": MESSAGES["offline"], "observedAt": now,

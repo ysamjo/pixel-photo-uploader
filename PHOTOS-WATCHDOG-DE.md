@@ -16,7 +16,7 @@ weder Fotoimport noch Web-UI blockieren. Der Mac-Dienst und sein Installer sind 
    Batchdateien, Rückbelege, MediaStore und Timeout-Beginn bleiben erhalten.
 3. Bei weiteren 30 Minuten Stillstand beginnt eine Stunde Wartezeit. Fortschritt hebt
    die Warnung auf, gibt aber keinen zweiten Neustart desselben Batch frei. Bleibt der
-   Fortschritt aus, folgt eine dauerhafte Warnung im Web-UI und Containerstatus.
+   Fortschritt aus, folgt eine Warnung im Web-UI und Containerstatus. Auch diese endet bei erneutem Fortschritt; das Neustartbudget bleibt verbraucht.
    Companion 1.2.8 zeigt sie außerdem auf dem Pixel. Ein neuer Batch erhält ein neues Budget.
 
 Geprüft werden Modell **Pixel** und Seriennummer **FA69M0305152**. Pausierte
@@ -26,10 +26,16 @@ respektiert. Verbindungsabbrüche, Host-Schlaf und Uhrsprünge gelten nicht als 
 **Keine Geräteneustarts, kein Cache-/Datenlöschen, kein Root auf dem Pixel.** Dieses
 Pixel braucht eine spezielle Kabel-/Stromversorgung; Reboot nur nach ausdrücklicher Freigabe.
 
+Ab 3.3.23 enthält der Status `batchIds` für die aktuell beobachteten Handreichungen.
+Die vorzeitige Serverfreigabe nach drei Stunden Alarm gilt nur für diese Batches
+und nur bei einem höchstens 150 Sekunden alten Status. Meldungen ohne Batch-ID,
+veraltete Meldungen und zukünftige Zeitstempel lösen keine vorzeitige Freigabe aus.
+Messlücken unterbrechen den nachgewiesenen Alarmzeitraum. Der normale Timeout bleibt gültig.
+
 ## ZimaOS-Einrichtung
 
 ```bash
-docker build -t pixel-photo-uploader:3.3.21 .
+docker build -t pixel-photo-uploader:3.3.23 .
 docker compose -f docker-compose.yml up -d
 ```
 

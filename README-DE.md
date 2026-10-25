@@ -30,7 +30,7 @@ Kein ADB, kein USB-Kabel nötig — läuft 24/7 als Container auf ZimaOS.
 3. **Duplikate entscheidet SHA-256:** Nicht der Dateiname.
 4. **Screenshots & Memes:** Bleiben im Eingang und gehen nie ans Pixel.
 5. **Datei für Datei abgerechnet:** Eine offene Handreichung hält die Queue nicht auf – der nächste Batch läuft mit, das Telefon hält dabei nie mehr als eine Batchgröße.
-6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 72 h) keinen Rückbeleg hat, wandert in `blocked.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; blockierte Fingerabdrücke laufen nie wieder ein.
+6. **Keine Datei wartet ewig:** Was nach `BackupTimeoutHours` (Standard 24 h) keinen Rückbeleg hat, wandert in `unverified.csv` und gibt den Batch-Ordner frei. Das Archiv behält seine Kopie, nur die Handreichung aufs Pixel endet; die Datei wird später in kleinen Retry-Paketen automatisch erneut eingereiht.
 7. **Eine Absage ist kein Erfolgsbeleg:** Sagt Google Fotos zweimal „Nichts freizugeben", bleibt der Upload unbestätigt. Die Datei kommt nach `unverified.csv`, ihre Handreichung wird sofort vom Pixel entfernt und die Archiv-Kopie bleibt erhalten. Frühestens nach 24 h läuft sie in einem kleinen Verifikations-Retry (max. 0,5 GiB pro Auffüllung) erneut ein.
 8. **Erst der Beleg, dann die Nachlage:** Fehlt eine Handreichungskopie im Batch-Ordner, wartet der Server zehn Minuten auf den Rückbeleg, bevor er aus dem Archiv nachlegt. Resilio trägt die Löschung einer gelungenen Speicherfreigabe schneller zurück, als der Beleg des Pixels läuft – ein sofortiges Nachlegen würde die Freigabe des Telefons selbst rückgängig machen.
 
@@ -44,7 +44,8 @@ Ausführlich zu Reihenfolge, Latenz, Zählern und offenen Punkten:
 - **auf dem Pixel** – offene Handreichungen im Batch-Ordner.
 - **abgeschlossen / hochgeladen / in den letzten 24 h** – Belege aus `completed.csv`, dazu die Byte-Summen: „hochgeladen" ist alles seit der ersten Buchung, „in den letzten 24 h" das Fenster davor. Grundlage ist `CompletedUtc`; die Fingerabdrücke aus dem Duplikat-Kurzschluss (`Identical content already completed`) sind mitgezählt.
 - **unbestätigt** – Google Fotos sagte zweimal „Nichts freizugeben": kein Erfolgsbeleg, Archiv-Kopie bleibt, Retry frühestens nach 24 h.
-- **blockiert** – endgültig aus der Queue, aus einem von zwei Gründen: entweder kam nach `BackupTimeoutHours` (Standard 72 h) kein Rückbeleg, oder es ist eine 0-Byte-Datei, die Google Fotos nicht sichern kann. Die Archiv-Kopie bleibt, nur die Handreichung aufs Pixel endet; ein blockierter Fingerabdruck läuft nie wieder ein.
+- **blockiert** – endgültig aus der Queue, aus einem von zwei Gründen: entweder ist eine Datei per Hand gesperrt worden, oder es ist eine 0-Byte-Datei, die Google Fotos nicht sichern kann. Die Archiv-Kopie bleibt, nur die Handreichung aufs Pixel endet; ein blockierter Fingerabdruck läuft nie wieder ein.
+- Ohne Rückbeleg nach `BackupTimeoutHours` (Standard 24 h) landet eine Datei nicht mehr in `blocked.csv`, sondern im Retry-Register **unbestätigt**.
 
 Alle Zahlen stehen in deutscher Schreibweise (Punkt als Tausender-, Komma als Dezimaltrenner).
 
@@ -84,17 +85,17 @@ tests/                     pytest-Suite (kein Netzwerk nötig)
 Entweder direkt auf dem ZimaOS-NAS bauen:
 ```bash
 cd /DATA/AppData/pixel-photo-uploader
-docker build -t pixel-photo-uploader:3.3.21 .
+docker build -t pixel-photo-uploader:3.3.23 .
 ```
 
 Oder vom Entwicklungsrechner übertragen:
 ```bash
 # Auf dem Mac/PC:
-docker save pixel-photo-uploader:3.3.21 | gzip > pixel-photo-uploader-3.3.21.tar.gz
-scp pixel-photo-uploader-3.3.21.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
+docker save pixel-photo-uploader:3.3.23 | gzip > pixel-photo-uploader-3.3.23.tar.gz
+scp pixel-photo-uploader-3.3.23.tar.gz user@<ZIMAOS-IP>:/DATA/AppData/pixel-photo-uploader/
 
 # Auf ZimaOS via SSH:
-docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.21.tar.gz
+docker load < /DATA/AppData/pixel-photo-uploader/pixel-photo-uploader-3.3.23.tar.gz
 ```
 
 ### 2. Im ZimaOS App-Manager installieren

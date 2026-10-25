@@ -56,7 +56,8 @@ final class AppState {
             }
         } else edit.remove("errorRetryAt");
         edit.apply();
-        log(context, detail);
+        // Feste Kennung am Zeilenanfang, damit die Web-UI Fehler und Phasenwechsel filtern kann.
+        log(context, (PHASE_ERROR.equals(phase) ? "[FEHLER] " : "[PHASE] ") + detail);
     }
 
     // Absage-Marken: Sagt Google Fotos „Nichts freizugeben“, darf die Automatik dieselben
@@ -139,10 +140,16 @@ final class AppState {
         return result;
     }
 
+    private static String lastMessage;
+
     static void log(Context context, String message) {
+        // Wiederholungen direkt hintereinander (z. B. der 30-s-Tick) nicht erneut schreiben.
+        String flat = message.replace('\n', ' ');
+        if (flat.equals(lastMessage)) return;
+        lastMessage = flat;
         File logFile = new File(context.getFilesDir(), "companion.log");
         String time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.GERMANY).format(new Date());
-        String line = time + "  " + message.replace('\n', ' ') + "\n";
+        String line = time + "  " + flat + "\n";
         try (FileWriter writer = new FileWriter(logFile, true)) {
             writer.write(line);
         } catch (Exception ignored) { }

@@ -1,5 +1,6 @@
 """Batch handover + receipt confirm incl. v3.3.9 partial-confirm shrink."""
 import csv
+import pytest
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ def _cfg(tmp: Path) -> dict:
     return {
         "SourceRoot": str(archive), "StagingRoot": str(staging),
         "ControlRoot": str(control), "BatchGiB": 5.0, "StableMinutes": 0.0,
-        "BackupTimeoutHours": 72,
+        "BackupTimeoutHours": 24,
     }
 
 
@@ -182,9 +183,10 @@ def test_abgelaufene_uebergabe_blockiert_und_schrumpft_den_batch(tmp_path, monke
 
     rest = store.load_staged(staged_file)
     assert [e["RelativePath"] for e in rest] == ["b.jpg"]
-    rows = store.load_blocked(blocked_file)
+    assert store.load_blocked(blocked_file) == []
+    rows = store.load_unverified(tmp_path / "state" / "unverified.csv")
     assert [r["RelativePath"] for r in rows] == ["a.jpg"]
-    assert rows[0]["Fingerprint"] == "fp-a.jpg" and rows[0]["BatchId"]
+    assert rows[0]["Fingerprint"] == "fp-a.jpg"
 
     d = batches.batch_dir(Path(cfg["StagingRoot"]), rest[0]["BatchId"])
     assert (d / before["fp-a.jpg"]["StagedName"]).is_file() is False
@@ -204,7 +206,8 @@ def test_alles_abgelaufen_entfernt_den_batch_ordner(tmp_path, monkeypatch):
                                  now=old + timedelta(hours=72, minutes=1)) == 2
 
     assert store.load_staged(staged_file) == []
-    assert len(store.load_blocked(blocked_file)) == 2
+    assert store.load_blocked(blocked_file) == []
+    assert len(store.load_unverified(tmp_path / "state" / "unverified.csv")) == 2
     assert not batches.batch_dir(Path(cfg["StagingRoot"]), batch_id).exists()
 
 
@@ -304,7 +307,7 @@ def test_alte_absagen_bleiben_unbestaetigt(tmp_path, monkeypatch):
     entries = [{"Fingerprint": f"fp-{i}", "Sha256": "", "RelativePath": f"{i}.jpg",
                 "Size": "100", "BatchId": "b1", "StagedUtc": ""} for i in (1, 2, 3)]
     store.append_blocked(entries[:2], "Google Photos refused to free the file", blocked_file)
-    store.append_blocked(entries[2:], "No receipt within 72 h", blocked_file)
+    store.append_blocked(entries[2:], "Manuell gesperrt", blocked_file)
 
     assert batches.migrate_refusal_blocks(blocked_file, completed_file, unverified_file) == 2
     assert [r["Fingerprint"] for r in store.load_blocked(blocked_file)] == ["fp-3"]
@@ -362,7 +365,7 @@ def test_copying_ohne_erstzeitpunkt_laeuft_nicht_sofort_ab_und_wird_repariert(tm
 
 
 def test_restaging_setzt_urspruengliche_timeout_uhr_nicht_zurueck(tmp_path, monkeypatch):
-    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     first_time = "2026-01-01T00:00:00+00:00"
     staged[0]["StagedUtc"] = first_time
@@ -373,9 +376,10 @@ def test_restaging_setzt_urspruengliche_timeout_uhr_nicht_zurueck(tmp_path, monk
      / staged[0]["StagedName"]).unlink()
 
     batches.repair_batches(cfg, staged_file)
-    repaired = next(e for e in store.load_staged(staged_file) if e["Fingerprint"] == "fp-a.jpg")
-    assert repaired["StagedUtc"] == first_time
-    assert "MissingSinceUtc" not in repaired
+    # Nach der Frist wird blockiert, nicht nachgelegt - die Uhr bleibt unberuehrt.
+    assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
+    assert blocked_file.exists()
+    assert first_time == "2026-01-01T00:00:00+00:00"
 
 
 def test_wartende_dateien_belegen_hoechstens_eine_kappe(tmp_path, monkeypatch):
@@ -500,7 +504,7 @@ def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, mo
     als der Rueckbeleg des Telefons laeuft. Die Archiv-Kopie liegt also ploetzlich
     fehlend im Batch - und darf nicht sofort zurueckgelegt werden, sonst macht die
     NAS die Freigabe selbst zunichte."""
-    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     batch = batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
     copy = batch / staged[0]["StagedName"]
@@ -512,15 +516,16 @@ def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, mo
 
     _missing_since(staged_file, "fp-a.jpg", batches.REPAIR_GRACE_SECONDS + 1)
     batches.repair_batches(cfg, staged_file)
-    assert copy.exists()
-    assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]
+    assert not copy.exists()
+    assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
+    assert blocked_file.exists()
 
 
 def test_repair_erkennt_beschaedigte_oder_leere_dateien(tmp_path, monkeypatch):
     """Eine 0-Byte- oder abweichende Kopie im Batch ist keine Freigabe, sondern
     eine fehlerhafte Datei. Sie wird wie eine fehlende behandelt und nach der Frist
-    aus dem Archiv ersetzt."""
-    cfg, staged_file, _ = _two_in_one_batch(tmp_path, monkeypatch)
+    blockiert, nicht aus dem Archiv nachgelegt."""
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     batch = batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
     copy = batch / staged[0]["StagedName"]
@@ -532,6 +537,198 @@ def test_repair_erkennt_beschaedigte_oder_leere_dateien(tmp_path, monkeypatch):
 
     _missing_since(staged_file, "fp-a.jpg", batches.REPAIR_GRACE_SECONDS + 1)
     batches.repair_batches(cfg, staged_file)
-    assert copy.stat().st_size == int(staged[0]["Size"])
-    assert "MissingSinceUtc" not in store.load_staged(staged_file)[0]
+    assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
+    assert blocked_file.exists()
 
+
+def test_expire_staged_vorzeitig_bei_persistenter_watchdog_warnung(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    watchdog_file = tmp_path / "state" / "photos-watchdog" / "photos-watchdog-status.json"
+    watchdog_file.parent.mkdir(parents=True, exist_ok=True)
+
+    old = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    for name in ("fp-a.jpg", "fp-b.jpg"):
+        _age(staged_file, name, old)
+
+    now = old + timedelta(hours=3, minutes=10)
+    # Alert seit 3,1 Stunden
+    watchdog_file.write_text(json.dumps({
+        "state": "alert",
+        "observedAt": now.timestamp(),
+        "batchIds": [store.load_staged(staged_file)[0]["BatchId"]],
+        "alertSince": old.timestamp()
+    }))
+
+    # Normaler 24h-Timeout waere noch lange nicht faellig, aber Watchdog-Stillstand loest vorzeitige Freigabe aus
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now,
+                                 unverified_file=unverified_file,
+                                 watchdog_status_file=watchdog_file) == 2
+
+    assert store.load_staged(staged_file) == []
+    # Dateien landen in unverified.csv, NICHT in blocked.csv (gesunde Dateien sollen spaeter in kleinen Batches geprueft werden)
+    assert not blocked_file.exists()
+    unverified = store.load_unverified(unverified_file)
+    assert len(unverified) == 2
+    assert "Watchdog alert: Google Photos stalled" in unverified[0]["Reason"]
+
+
+def test_expire_staged_ignoriert_frische_watchdog_warnung(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    watchdog_file = tmp_path / "state" / "photos-watchdog" / "photos-watchdog-status.json"
+    watchdog_file.parent.mkdir(parents=True, exist_ok=True)
+
+    old = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+    for name in ("fp-a.jpg", "fp-b.jpg"):
+        _age(staged_file, name, old)
+
+    now = old + timedelta(hours=1)
+    # Alert erst seit 1 Stunde (unter der Schwelle von 3 Stunden)
+    watchdog_file.write_text(json.dumps({
+        "state": "alert",
+        "observedAt": now.timestamp(),
+        "batchIds": [store.load_staged(staged_file)[0]["BatchId"]],
+        "alertSince": old.timestamp()
+    }))
+
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now,
+                                 unverified_file=unverified_file,
+                                 watchdog_status_file=watchdog_file) == 0
+
+    assert len(store.load_staged(staged_file)) == 2
+    assert not blocked_file.exists()
+    assert not unverified_file.exists()
+
+
+def test_solo_batch_fuer_grosse_einzeldatei(tmp_path, monkeypatch):
+    """Eine Datei groesser als BatchGiB (z.B. 8 GiB Video), aber <= 10 GiB,
+    wird als Solo-Batch staged, wenn das Staging leer ist."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    video_size = int(8.0 * 1024**3)
+    (Path(cfg["SourceRoot"]) / "hochzeit.mp4").write_bytes(b"dummy video data")
+
+    store.save_catalog([{
+        "Fingerprint": "fp-hochzeit", "RelativePath": "hochzeit.mp4", "Size": str(video_size),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "fakehash"
+    }], catalog_file)
+    store.save_staged([], staged_file)
+
+    # Standard BatchGiB ist 5.0 -> 8 GiB Datei ist groesser als BatchGiB!
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+    staged = store.load_staged(staged_file)
+    assert len(staged) == 1
+    assert staged[0]["RelativePath"] == "hochzeit.mp4"
+    assert int(staged[0]["Size"]) == video_size
+
+
+def test_grosse_einzeldatei_wartet_wenn_staging_belegt(tmp_path, monkeypatch):
+    """Ein grosses Video (> BatchGiB) wird nicht dazu gestaged, wenn bereits
+    andere Dateien im Staging liegen."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    video_size = int(8.0 * 1024**3)
+    (Path(cfg["SourceRoot"]) / "hochzeit.mp4").write_bytes(b"x" * 100)
+    (Path(cfg["SourceRoot"]) / "small.jpg").write_bytes(b"x" * 100)
+
+    # Staging haelt bereits 1 GiB
+    store.save_staged([{
+        "Fingerprint": "fp-old", "RelativePath": "old.jpg", "Size": str(1024**3),
+        "BatchId": "b1", "StagedName": "000001-old.jpg", "PixelSuffix": "/Batches/b1/000001-old.jpg",
+        "State": "Staged", "StagedUtc": "2026-01-01T00:00:00+00:00"
+    }], staged_file)
+
+    store.save_catalog([
+        {"Fingerprint": "fp-hochzeit", "RelativePath": "hochzeit.mp4", "Size": str(video_size),
+         "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "hash1"},
+        {"Fingerprint": "fp-small", "RelativePath": "small.jpg", "Size": "100",
+         "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "hash2"}
+    ], catalog_file)
+
+    # 8 GiB Video darf nicht dazugepackt werden; nur small.jpg wird aufgenommen
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 1
+    staged = store.load_staged(staged_file)
+    assert len(staged) == 2
+    assert [e["RelativePath"] for e in staged] == ["old.jpg", "small.jpg"]
+
+
+def test_datei_ueber_10_gib_wird_blockiert(tmp_path, monkeypatch):
+    """Dateien > 10 GiB (Google-Fotos-Hardlimit) werden nach blocked.csv geschrieben."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    blocked_file = tmp_path / "state" / "blocked.csv"
+    huge_size = int(12.0 * 1024**3)
+
+    store.save_catalog([{
+        "Fingerprint": "fp-huge", "RelativePath": "huge.mp4", "Size": str(huge_size),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": ""
+    }], catalog_file)
+    store.save_staged([], staged_file)
+
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+    blocked = store.load_blocked(blocked_file)
+    assert len(blocked) == 1
+    assert blocked[0]["RelativePath"] == "huge.mp4"
+    assert "10 GB" in blocked[0]["Reason"]
+
+
+
+
+
+@pytest.mark.parametrize("change", [
+    {"observedAt": 0}, {"observedAt": 99999999999}, {"batchIds": ["other-batch"]},
+    {"batchIds": []}, {"batchIds": "batch"}, {"alertSince": None},
+    {"alertSince": float("nan")}, {"observedAt": float("nan")}, {"state": "offline"},
+])
+def test_invalid_or_unrelated_alert_does_not_expire_batch(tmp_path, monkeypatch, change):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for name in ("fp-a.jpg", "fp-b.jpg"):
+        _age(staged_file, name, old)
+    now = old + timedelta(hours=4)
+    data = {"state": "alert", "observedAt": now.timestamp(), "alertSince": old.timestamp(),
+            "batchIds": [store.load_staged(staged_file)[0]["BatchId"]]}
+    data.update(change)
+    watchdog = tmp_path / "watchdog.json"
+    watchdog.write_text(json.dumps(data))
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now,
+                                 watchdog_status_file=watchdog) == 0
+    assert len(store.load_staged(staged_file)) == 2
+
+
+def test_watchdog_only_releases_its_batch_and_late_receipt_cannot_complete_it(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    staged = store.load_staged(staged_file)
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for entry in staged:
+        entry["StagedUtc"] = old.isoformat()
+    released = dict(staged[0])
+    staged[1]["BatchId"] = "other-batch"
+    store.save_staged(staged, staged_file)
+    now = old + timedelta(hours=4)
+    watchdog = tmp_path / "watchdog.json"
+    watchdog.write_text(json.dumps({"state": "alert", "observedAt": now.timestamp(),
+                                   "alertSince": old.timestamp(), "batchIds": [released["BatchId"]]}))
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now,
+                                 watchdog_status_file=watchdog) == 1
+    assert store.load_staged(staged_file)[0]["BatchId"] == "other-batch"
+    (Path(cfg["ControlRoot"]) / "receipt-late.json").write_text(json.dumps({
+        "version": 1, "removedPaths": ["/DCIM/PixelSync" + released["PixelSuffix"]]}))
+    assert batches.confirm_staged(cfg, staged_file) == 0
+    assert not (tmp_path / "state" / "completed.csv").exists()
+
+
+def test_regular_timeout_keeps_its_policy_even_with_matching_watchdog_alert(tmp_path, monkeypatch):
+    cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for name in ("fp-a.jpg", "fp-b.jpg"):
+        _age(staged_file, name, old)
+    now = old + timedelta(hours=80)
+    watchdog = tmp_path / "watchdog.json"
+    watchdog.write_text(json.dumps({"state": "alert", "observedAt": now.timestamp(),
+                                   "alertSince": old.timestamp(),
+                                   "batchIds": [store.load_staged(staged_file)[0]["BatchId"]]}))
+    assert batches.expire_staged(cfg, staged_file, blocked_file, now=now,
+                                 watchdog_status_file=watchdog) == 2
+    assert store.load_blocked(blocked_file) == []
+    rows = store.load_unverified(tmp_path / "state" / "unverified.csv")
+    assert len(rows) == 2
+    assert all(row["Reason"] == "No receipt within 24 h" for row in rows)

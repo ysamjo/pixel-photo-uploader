@@ -297,6 +297,56 @@ def remove_unverified(fingerprints, path: Path | None = None) -> int:
     return removed
 
 
+MAX_UNVERIFIED_ATTEMPTS = 3
+UNVERIFIED_PROMOTE_HOURS = 24.0
+
+
+def promote_unverified_to_completed(path: Path | None = None,
+                                    completed_file: Path | None = None,
+                                    now: datetime | None = None) -> int:
+    """After repeated retries or a long wait, assume the backup succeeded.
+
+    Google Photos 7.97+ no longer offers Resilio-synced files for deletion.
+    The companion app keeps reporting "refused" and the files stall in
+    unverified.csv forever. After MAX_UNVERIFIED_ATTEMPTS retries (or
+    UNVERIFIED_PROMOTE_HOURS since the first refusal) we treat them as
+    completed: the archive copy stays, the Pixel copy is gone, and the
+    queue moves on.
+    """
+    reference = now or datetime.now(timezone.utc)
+    p = path or unverified_path()
+    rows = load_unverified(p)
+    if not rows:
+        return 0
+    fps, hashes = load_completion_sets(completed_file)
+    promoted: list[dict] = []
+    keep: list[dict] = []
+    for row in rows:
+        try:
+            attempts = int(str(row.get("Attempts", "0")) or 0)
+        except ValueError:
+            attempts = 0
+        first = _parse_utc(row.get("FirstUnverifiedUtc"))
+        hours = (reference - first).total_seconds() / 3600.0 if first != NEVER else 0.0
+        if attempts >= MAX_UNVERIFIED_ATTEMPTS or hours >= UNVERIFIED_PROMOTE_HOURS:
+            promoted.append(row)
+        else:
+            keep.append(row)
+    if not promoted:
+        return 0
+    count = 0
+    for row in promoted:
+        reason = ("Assumed completed after " + str(row.get("Attempts", "?"))
+                  + " unverified attempts (Google Photos refuses free-up)")
+        if add_completion(row, fps, hashes, reason, completed_file):
+            count += 1
+    if count:
+        save_unverified(keep, p)
+        write_log(f"{count} files promoted from unverified to completed "
+                  f"({len(promoted) - count} already in ledger).", "WARN")
+    return count
+
+
 def _parse_utc(value) -> datetime:
     text = str(value or "").strip()
     if not text:

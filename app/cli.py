@@ -30,7 +30,7 @@ def cmd_setup() -> None:
         "StableSeconds": _ask("Stability wait seconds", "120"),
         "RescanMinutes": _ask("Archive check every minutes", "360"),
         "DeepRescanDays": _ask("Full archive pass every days", "7"),
-        "BackupTimeoutHours": _ask("Hours without a receipt before dropping a file", "72"),
+        "BackupTimeoutHours": _ask("Hours without a receipt before dropping a file", "24"),
     }
     result = apply_setup(values)
     if not result["ok"]:

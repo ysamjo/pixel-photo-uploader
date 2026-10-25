@@ -90,6 +90,35 @@ def test_pixel_protok_showt_auf_der_seite_und_escapt(tmp_path):
     assert "<img" not in html
 
 
+def test_pixel_protok_kuerzt_zeit_und_fasst_wiederholungen_zusammen():
+    from app.server import compact_companion
+    lines = [
+        "2026-10-23 08:01:02  Überwachung gestartet.",
+        "2026-10-23 08:01:32  Kein Bestätigungsknopf.",
+        "2026-10-23 08:02:02  Kein Bestätigungsknopf.",
+        "2026-10-23 08:02:32  Kein Bestätigungsknopf.",
+        "2026-10-23 08:03:02  Fertig.",
+    ]
+    assert compact_companion(lines) == [
+        "08:01:02  Überwachung gestartet.",
+        "08:01:32  Kein Bestätigungsknopf.  (x 3)",
+        "08:03:02  Fertig.",
+    ]
+
+
+def test_pixel_protok_zeigt_phasen_und_fehler_gefiltert(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "companion-log.txt").write_text(
+        "2026-10-23 08:01:02  [PHASE] Überwachung gestartet.\n"
+        "2026-10-23 08:01:32  Kein Bestätigungsknopf.\n"
+        "2026-10-23 08:02:02  [FEHLER] Fotos hängt.\n", encoding="utf-8")
+    html = render_page(_info(), companion_lines=companion_lines(str(control)))
+    assert "Phasen und Fehler" in html
+    assert "[FEHLER] Fotos hängt." in html
+    assert html.count("Kein Bestätigungsknopf.") == 1
+
+
 def test_seite_ohne_pixel_protok_nennt_keine_leere_grouppe():
     html = render_page(_info())
     assert "Pixel meldet" not in html

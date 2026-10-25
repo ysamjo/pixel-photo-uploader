@@ -35,7 +35,7 @@ def test_abbruchschwelle_ohne_beleg_wird_geklemt(tmp_path, monkeypatch):
     apply_setup(_values(tmp_path, BackupTimeoutHours="0"))
     assert load_config()["BackupTimeoutHours"] == 1
     apply_setup(_values(tmp_path))
-    assert load_config()["BackupTimeoutHours"] == 72
+    assert load_config()["BackupTimeoutHours"] == 24
 
 
 def test_verschachtelte_ordner_werden_abgewiesen(tmp_path, monkeypatch):

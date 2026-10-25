@@ -38,6 +38,7 @@ public class BackupMonitorService extends Service {
     private Handler worker;
     private MediaFolderScanner scanner;
     private PowerManager.WakeLock wakeLock;
+    private long lastGhostPurgeAt = 0L;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -90,6 +91,11 @@ public class BackupMonitorService extends Service {
         }
 
         purgeResilioArchive();
+        long now = System.currentTimeMillis();
+        if (now - lastGhostPurgeAt >= 60_000L) {
+            lastGhostPurgeAt = now;
+            MediaStoreCleaner.purgeGhosts(this);
+        }
 
         String phase = AppState.phase(this);
         MediaFolderScanner.Snapshot stable = scanner.scanStable(STABLE_MILLIS);
@@ -162,13 +168,18 @@ public class BackupMonitorService extends Service {
                 .putString("batchPaths", newPaths)
                 .putLong("batchBytes", offerBytes)
                 .putBoolean("sawActiveBackup", false)
+                .putBoolean("releaseConfirmed", false).putString("releaseSnapshot", "")
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
                 .putInt("freeUpRound", 0);
         if (isNewBatch) {
             scanner.mediaScan(offerable);
             edit.putLong("batchStartedAt", System.currentTimeMillis())
-                    .putInt("nothingToFreeRounds", 0);
+                    .putInt("nothingToFreeRounds", 0)
+                    .putLong("lastProgressAt", System.currentTimeMillis())
+                    .putLong("lastStallProbeAt", 0L)
+                    .putInt("lastRemaining", Integer.MAX_VALUE)
+                    .putBoolean("hasFailedItems", false);
         }
         edit.apply();
         AppState.phase(this, AppState.PHASE_WAIT_BACKUP,
@@ -210,79 +221,65 @@ public class BackupMonitorService extends Service {
     }
 
     private void verifyCleanup() {
-        SharedPreferences prefs = AppState.prefs(this);
-        List<String> before = split(prefs.getString("batchPaths", ""));
-        int removed = 0;
-        int remaining = 0;
-        List<String> removedPaths = new ArrayList<>();
-        for (String path : before) {
-            // Eine abgelehnte Datei, die jetzt fehlt, hat der Server freigegeben — nicht
-            // Google Fotos. Sie wäre ein Doppelbeleg auf ein bereits gefälltes Urteil.
-            if (AppState.isRefused(this, path)) continue;
-            if (new File(path).exists()) remaining++;
-            else { removed++; removedPaths.add(path); }
-        }
-        if (removed > 0) {
-            prefs.edit()
-                    .putString("pendingReceiptPaths", join(removedPaths))
-                    .putInt("pendingReceiptRemaining", remaining)
-                    .putInt("pendingReceiptCount", removed)
-                    .apply();
-            flushPendingReceipt();
-        } else {
-            prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L).apply();
-            AppState.phase(this, AppState.PHASE_MONITORING,
-                    "Google Fotos hat keine überwachte Datei entfernt. Nächste Prüfung in 15 Minuten.");
-        }
+        observeReleasedFiles(AppState.prefs(this), true);
     }
 
     private boolean healReceiptFromDisk(SharedPreferences prefs, String phase) {
-        String previousError = prefs.getString("detail", "");
-        // Nach einer Freigabe entscheidet allein der Dateibestand: fehlt die Datei, war sie
-        // weg — auch wenn die App den Knopf nicht selbst gedrückt hat oder vorher in einem
-        // Fehlerzustand hängen geblieben ist. VERIFY rechnet selbst ab, bleibt also außen vor.
         if (AppState.PHASE_VERIFY.equals(phase)) return false;
-        // Nur für einen Batch, dessen Sicherung beobachtet wurde oder der bereits in der Freigabephase
-        // oder im Fehlerzustand war, gilt das Verschwinden der Datei als Beleg der Freigabe.
-        boolean wasInFreeUpOrError = AppState.PHASE_OPEN_FREE_UP.equals(phase)
-                || AppState.PHASE_CONFIRM_FREE_UP.equals(phase)
-                || AppState.PHASE_ERROR.equals(phase);
-        boolean confirmedBackup = prefs.getInt("completeStreak", 0) >= 1 || prefs.getBoolean("sawActiveBackup", false);
-        if (!wasInFreeUpOrError && !confirmedBackup) return false;
+        return observeReleasedFiles(prefs, false);
+    }
+
+    private boolean observeReleasedFiles(SharedPreferences prefs, boolean verifying) {
         List<String> paths = split(prefs.getString("batchPaths", ""));
-        if (paths.isEmpty()) return false;
-        List<String> gone = new ArrayList<>();
-        int remaining = 0;
+        if (paths.isEmpty() && !verifying) return false;
+        List<String> present = new ArrayList<>();
+        List<String> refused = new ArrayList<>();
+        boolean missing = false;
         for (String path : paths) {
-            // Verschwindet eine abgelehnte Datei, war das die eigene Handreichungsfreigabe des
-            // Servers über Resilio — keine Google-Freigabe. Sie darf nie als Erfolg verbucht
-            // werden; das Urteil darüber ist schon als Absage übergeben.
-            if (AppState.isRefused(this, path)) continue;
-            if (new File(path).exists()) remaining++;
-            else gone.add(path);
+            if (new File(path).isFile()) present.add(path);
+            else missing = true;
+            if (AppState.isRefused(this, path)) refused.add(path);
         }
-        if (gone.isEmpty()) return false;
-        prefs.edit()
-                .putString("pendingReceiptPaths", join(gone))
-                .putInt("pendingReceiptRemaining", remaining)
-                .putInt("pendingReceiptCount", gone.size())
-                .apply();
-        AppState.log(this, gone.size() + " freigegebene Dateien aus dem Dateibestand nachgebucht.");
-        flushPendingReceipt();
-        if (AppState.PHASE_ERROR.equals(phase) && !RecoveryPolicy.retryable(previousError)
-                && AppState.PHASE_MONITORING.equals(AppState.phase(this))) {
-            // Ein erfolgreicher Beleg repariert keinen fehlenden Account oder vollen Kontospeicher.
-            AppState.phase(this, AppState.PHASE_ERROR, previousError);
+        if (!missing && !verifying) return false;
+        List<String> removed = ReleaseEvidence.removed(
+                split(prefs.getString("releaseSnapshot", "")), present, refused,
+                prefs.getBoolean("releaseConfirmed", false));
+        if (!removed.isEmpty()) {
+            MediaStoreCleaner.purgeGhosts(this);
+            prefs.edit().putString("pendingReceiptPaths", join(removed))
+                    .putInt("pendingReceiptRemaining", present.size())
+                    .putInt("pendingReceiptCount", removed.size()).apply();
+            flushPendingReceipt();
+        } else if (missing) {
+            // Resilio/Server kann Dateien entfernen. Ohne bestaetigten Klick kein Erfolgsbeleg.
+            AppState.log(this, "Batchdateien fehlen ohne bestätigte Google-Fotos-Freigabe; kein Erfolgsbeleg.");
+            resumeRemaining(prefs, present, 60_000L);
+        } else {
+            resumeRemaining(prefs, present, 15 * 60_000L);
         }
         return true;
+    }
+
+    private void resumeRemaining(SharedPreferences prefs, List<String> present, long delay) {
+        String previousPhase = AppState.phase(this);
+        String previousDetail = prefs.getString("detail", "");
+        prefs.edit().putString("batchPaths", join(present))
+                .putBoolean("releaseConfirmed", false).putString("releaseSnapshot", "")
+                .putInt("completeStreak", 0).putLong("lastCompleteAt", 0L)
+                .putLong("lastStallProbeAt", System.currentTimeMillis())
+                .putInt("lastRemaining", Integer.MAX_VALUE)
+                .putLong("nextAttemptAt", System.currentTimeMillis() + delay).apply();
+        if (AppState.PHASE_ERROR.equals(previousPhase) && !RecoveryPolicy.retryable(previousDetail)) return;
+        AppState.phase(this, present.isEmpty() ? AppState.PHASE_MONITORING : AppState.PHASE_WAIT_BACKUP,
+                present.isEmpty() ? "Handreichung beendet; warte auf neue Fotos."
+                        : present.size() + " Dateien bleiben zur Sicherungsprüfung vorgemerkt.");
     }
 
     private void flushRefusalReceipt() {
         SharedPreferences prefs = AppState.prefs(this);
         List<String> refused = new ArrayList<>();
         for (String path : split(prefs.getString("pendingReceiptRefused", ""))) {
-            // Nur was noch liegt, ist eine echte Absage. Was fehlt, ist freigeben worden und
-            // wird über einen normalen Rückbeleg abgerechnet.
+            // Fehlende Dateien liefern weder eine neue Absage noch einen Erfolgsbeleg.
             if (new File(path).exists()) refused.add(path);
         }
         prefs.edit().putString("pendingReceiptRefused", "").apply();
@@ -317,6 +314,18 @@ public class BackupMonitorService extends Service {
         SharedPreferences prefs = AppState.prefs(this);
         List<String> removedPaths = split(prefs.getString("pendingReceiptPaths", ""));
         if (removedPaths.isEmpty()) return;
+        if (!ReleaseEvidence.authorizes(split(prefs.getString("releaseSnapshot", "")), removedPaths,
+                prefs.getBoolean("releaseConfirmed", false))) {
+            // Auch alte, vor dem Update vorgemerkte Belege brauchen einen belastbaren Nachweis.
+            AppState.log(this, "Vorgemerkter Rückbeleg ohne bestätigte Freigabeliste verworfen; kein Erfolg gebucht.");
+            prefs.edit().putString("pendingReceiptPaths", "").apply();
+            List<String> present = new ArrayList<>();
+            for (String path : split(prefs.getString("batchPaths", ""))) {
+                if (new File(path).isFile()) present.add(path);
+            }
+            resumeRemaining(prefs, present, 60_000L);
+            return;
+        }
         int remaining = prefs.getInt("pendingReceiptRemaining", 0);
         try {
             File receipt = ReceiptWriter.write(this, removedPaths, new ArrayList<String>(), remaining);
@@ -326,16 +335,19 @@ public class BackupMonitorService extends Service {
                     .putInt("lastRemoved", removedPaths.size())
                     .putString("lastReceipt", receipt.getAbsolutePath())
                     .putString("pendingReceiptPaths", "")
-                    .putString("batchPaths", "")
                     // Echter Fortschritt: Dateien sind weg. Die Absage-Zählung der Bedienungshilfe
                     // beginnt damit von vorn — sonst zählten sich alte Absagen gegen die neuen
                     // Dateien an.
                     .putInt("nothingToFreeRounds", 0)
                     .putLong("nextAttemptAt", System.currentTimeMillis() + 60_000L)
                     .apply();
-            AppState.phase(this, AppState.PHASE_MONITORING,
-                    removedPaths.size() + " Dateien lokal freigegeben; Rückbeleg für den Server geschrieben. " +
-                            remaining + " Dateien blieben erhalten.");
+            List<String> present = new ArrayList<>();
+            for (String path : split(prefs.getString("batchPaths", ""))) {
+                if (new File(path).isFile()) present.add(path);
+            }
+            resumeRemaining(prefs, present, 60_000L);
+            AppState.log(this, removedPaths.size() + " Dateien nach bestätigter Freigabe als Rückbeleg übergeben; "
+                    + remaining + " Dateien blieben erhalten.");
         } catch (Exception error) {
             AppState.phase(this, AppState.PHASE_ERROR,
                     "Dateien wurden lokal freigegeben, aber der Server-Rückbeleg konnte nicht geschrieben werden: " +

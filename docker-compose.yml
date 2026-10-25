@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.21
+    image: pixel-photo-uploader:3.3.23
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -42,7 +42,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.21
+    image: pixel-photo-uploader:3.3.23
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -61,7 +61,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   photos-watchdog:
-    image: pixel-photo-uploader:3.3.21
+    image: pixel-photo-uploader:3.3.23
     restart: unless-stopped
     command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
     environment:
@@ -92,11 +92,11 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.21"
-  update_at: "2026-10-13"
+  version: "3.3.23"
+  update_at: "2026-10-19"
   release_notes:
-    en_US: The status page writes every number the German way (dot as thousands separator, comma as decimal separator) and shows the uploaded volume, in total and for the last 24 hours.
-    de_DE: "Die Statusseite schreibt alle Zahlen in deutscher Schreibweise (Punkt als Tausender-, Komma als Dezimaltrenner) und zeigt das hochgeladene Volumen, gesamt und für die letzten 24 Stunden."
+    en_US: Early watchdog expiration for persistent stalls and alert_since tracking.
+    de_DE: "Vorzeitige Handreichungs-Freigabe bei persistenter Watchdog-Warnung und Erfassung von alert_since."
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues

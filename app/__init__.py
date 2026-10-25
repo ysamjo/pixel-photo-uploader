@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_VERSION = "3.3.21"
+APP_VERSION = "3.3.23"
 APP_BATCH_FOLDER = "Batches"
 
 MIN_BATCH_GIB = 0.25
@@ -17,7 +17,7 @@ MIN_DEEP_RESCAN_DAYS = 1
 MAX_DEEP_RESCAN_DAYS = 365
 # A rejected file must not hold the whole queue: after this many hours without a
 # receipt it leaves the handover and is recorded as blocked.
-DEFAULT_BACKUP_TIMEOUT_HOURS = 72
+DEFAULT_BACKUP_TIMEOUT_HOURS = 24
 MIN_BACKUP_TIMEOUT_HOURS = 1
 MAX_BACKUP_TIMEOUT_HOURS = 720
 # A handful of reports is cheaper to follow than to re-walk the whole archive.

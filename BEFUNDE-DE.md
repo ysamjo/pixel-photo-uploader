@@ -56,7 +56,7 @@ gleichzeitig gehen nicht: `acquire()` hält eine Sperre, der zweite wirft
 | `migrate_refusal_blocks` | alte unbelegte Absagen aus den Ledgern nach `blocked.csv` verschieben | Aufräumen, kein Regelbetrieb |
 | `confirm_staged` | Erfolgsbelege abrechnen | **vor** der Nachlage |
 | `settle_refused` | Absagebelege als unbestätigt blockieren und freigeben | **vor** der Nachlage |
-| `expire_staged` | Handreichungen ohne Beleg nach 72 h freigeben | **vor** der Nachlage |
+| `expire_staged` | Handreichungen ohne Beleg nach 24 h freigeben (Retry-Register) | **vor** der Nachlage |
 | `repair_batches` | fehlende Handreichungskopien aus dem Archiv ersetzen | zuletzt, und mit Schonfrist |
 | `select_and_stage_batch` | neue Dateien einreihen | braucht die freie Restkapazität aus den drei Schritten davor |
 
@@ -90,7 +90,7 @@ um 17:51:44 erneut, 98 s nach dem Zurücksetzen. Siehe §6, §7 und §9 Punkt 5.
 |---|---|---|
 | **Freigegeben** | Google Fotos entfernt die Datei wirklich, App vergleicht den Dateibestand | `completed.csv`, Grund „Android receipt after confirmed Google Photos free-up" |
 | **Nicht freigegeben / unbestätigt** | zweimal in Folge „Nichts freizugeben" | `unverified.csv`; Handreichung sofort freigeben, Archiv-Kopie bleibt, Retry frühestens nach 24 h |
-| **Kein Beleg** | nach `BackupTimeoutHours` = 72 h nichts eingetroffen | `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt |
+| **Kein Beleg** | nach `BackupTimeoutHours` = 24 h nichts eingetroffen | `unverified.csv` (automatischer Retry), Handreichung freigeben, Archiv-Kopie bleibt |
 
 Vierte Buchung, ohne Google-Fotos-Urteil: beim Einreihen vergleicht der Server die
 SHA-256 mit dem Ledger und bucht inhaltliche Zwillinge sofort
@@ -499,3 +499,81 @@ Messung am 2026-10-14, 16:03 CEST auf dem Upload-Pixel `FA69M0305152`:
      vollständig nach (924 Dateien, 5,25 GiB).
   4. **WLAN-ADB:** `adb tcpip 5555` reaktiviert und ZimaOS-Schlüssel dauerhaft auf dem Pixel bestätigt.
 
+## 13. Stagnation durch unvollständigen Upload / nicht sicherbare Elemente („4 items can't be backed up“) und Dialog-Speicherleck am 2026-10-19
+
+Messung am 2026-10-19, 14:30 CEST auf dem Upload-Pixel `FA69M0305152` und ZimaOS (`192.168.178.162`):
+
+- **Symptom:** Statusseite meldet `0,00 GiB in den letzten 24 h`. Batch `20261017-004229` (474 Dateien / 5,0 GiB) blockierte seit 59 Stunden (seit Samstag 17.10. 02:53 CEST).
+- **Befund:**
+  1. Google Fotos hing bei „Getting ready to back up • 52 items left to back up“ mit dem Hinweis „4 items can’t be backed up“.
+  2. Durch das permanent geöffnete Profil-Bottom-Sheet geriet Google Fotos in einen massiven GC-Thrash / Speicherleck: Dalvik-Heap war mit 280 MB von 291 MB am Limit, der Prozess brannte über 5.600 CPU-Minuten mit 150 % CPU-Dauerlast weg.
+  3. Der ADB-Watchdog startete Google Fotos um 03:25 CEST einmal neu, ging nach 1 h Cooldown in `alert` und verharrte danach passiv (keine Reboots ohne Freigabe).
+  4. Companion interpretierte den Text „Getting ready to back up“ als aktive Sicherung (`BACKUP_ACTIVE_NEEDLES`) und setzte seinen Stillstands-Timer endlos zurück.
+  5. Der Server wartete die vollen 72 Stunden `BackupTimeoutHours` ab.
+- **Konzeptverbesserung & Lösung:**
+  1. **Dialog-Schutz im Companion (1.2.12):** Wenn Google Fotos aktiv sichert (`BACKUP_ACTIVE_NEEDLES`), schließt Companion das Profil-Sheet sofort via `performGlobalAction(GLOBAL_ACTION_BACK)`. Google Fotos verbleibt in der Hauptansicht mit ~2 % CPU und gesundem Heap (~20 MB).
+  2. **Fortschritts- und Stillstandserkennung im Companion (1.2.12):**
+     - Companion liest die Zahl der verbleibenden Elemente (`remaining`) aus dem Bildschirmtext.
+     - Sinkt die Zahl für 20 Minuten (`BACKUP_STALL_MILLIS`) nicht, wird ein Sicherungsstillstand diagnostiziert.
+     - Werden nicht sicherbare Elemente gemeldet („4 items can’t be backed up“ / `FAILED_ITEMS_NEEDLES`, inkl. typografischer Apostrophe `\u2019`), verkürzt sich die Stillstands-Schwelle auf 5 Minuten (`FAILED_ITEMS_STALL_MILLIS`).
+     - Bei Stillstand erzwingt Companion über `openFreeUp()` die Freigabe: Alle tatsächlich in Google Fotos hochgeladenen Dateien werden vom Gerät gelöscht und als Erfolgsbeleg via `claimFreedFiles()` an den Server gemeldet. Verweigerte Dateien meldet Companion nach der 2. Runde als unbestätigt (`pendingReceiptRefused`).
+  3. **Vorzeitiger Watchdog-Timeout auf dem Server (3.3.22):**
+     - `photos_watchdog` erfasst `alert_since`.
+     - `expire_staged()` prüft den Watchdog-Status: Steht der Watchdog seit >= 3 Stunden auf `alert`, werden Handreichungen nach 3 Stunden vorzeitig freigegeben und wandern zur späteren Prüfung in 0,5-GiB-Portionen nach `unverified.csv` (statt 72 Stunden die Queue zu blockieren).
+
+## 14. Ursache der 0,00 GiB / 24 h und 11.959 fälschlich unbestätigten Dateien am 2026-10-19
+
+Messung am 2026-10-19, 19:30 CEST auf dem Upload-Pixel `FA69M0305152` und ZimaOS (`192.168.178.162`):
+
+- **Symptom:** Statusseite meldete `0,00 GiB in den letzten 24 h`, 11.959 Dateien standen in `unverified.csv` (davon 9.453 retry-fällig). Keine Datei schloss erfolgreich ab.
+- **Vollständige Fehlerkette (aufgedeckt & live nachgewiesen):**
+  1. **MediaStore-Geisterakkumulation:** Wenn Resilio Sync vom Server freigegebene Batches auf dem Dateisystem löschte, blieben 9.534 verwaiste Zeilen in `content://media/external/images/media` und `video/media` zurück. Google Fotos verharrte 24/7 in „Preparing backup • Scanning your photo library“.
+  2. **Fehlalarm durch Google-Fotos-Lebenszeit-Karte:** Auf der Startseite blendete Google Fotos eine ausklappbare Promo-Karte ein: `Backup complete • 331,459 photos backed up • dismiss` (die Gesamtzahl des Cloud-Kontos, nicht des aktuellen Batches!).
+  3. **Vorzeitige Überbrückung der Karenzzeit:** Suchbegriffe wie `preparing backup` oder `synchronis` standen in `BACKUP_ACTIVE_NEEDLES`. Dadurch setzte Companion `sawActiveBackup = true`, wodurch die 5-Minuten-Schonfrist `GRACE_MILLIS` sofort umgangen wurde.
+  4. **Falsch-Abschluss & 2-Runden-Absagefalle:**
+     - Companion las `Backup complete` aus der Lebenszeit-Karte, zählte Streak 2/2 und öffnete nach wenigen Sekunden „Speicherplatz freigeben“.
+     - Da der 5-GiB-Batch erst wenige Sekunden auf dem Pixel lag und noch gar nicht hochgeladen war, meldete Google Fotos logischerweise „Nichts freizugeben“ (Nothing to free up).
+     - Companion wertete das als Runde 1, wartete 15 Minuten, las erneut die Lebenszeit-Karte, öffnete erneut „Speicherplatz freigeben“ -> Runde 2!
+     - Nach nur 2 Runden (30 Minuten statt der für 5 GiB benötigten ~5 Stunden) deklarierte Companion den gesunden Batch als verweigert (`pendingReceiptRefused`)!
+     - Server buchte alle ~500 Dateien nach `unverified.csv` mit 24 h Wartezeit und löschte den Batch via Resilio.
+     - Resilio hinterließ weitere ~500 MediaStore-Geister. Dieser Zyklus wiederholte sich über Tage, bis 11.959 Dateien in `unverified.csv` strandeten und `completed_bytes_24h` auf 0,00 GiB sank.
+- **Konzeptverbesserungen & Lösungen:**
+  1. **Automatisierte MediaStore-Bereinigung (`MediaStoreCleaner`):** Companion bereinigt verwaiste Einträge in `Images.Media` und `Video.Media` periodisch (alle 60 s) sowie direkt nach jeder Freigabe (`verifyCleanup()` und `healReceiptFromDisk()`). Google Fotos scannt wieder ohne Verzögerung.
+  2. **Filterung von Header-Karten & Lebenszeit-Zählern:**
+     - `collect()` markiert Knoten innerhalb von `photos_home_header_expansion_view`.
+     - `isLifetimeSummary()` schließt Kontostände mit Tausendertrennern (z. B. `331,459 photos backed up`) aus der Statusprüfung aus.
+     - `collapseHeaderCardIfExpanded()` schließt/dismissed die Promo-Karte automatisch.
+     - Das mehrdeutige Wort `backed up` wurde aus `BACKUP_COMPLETE_NEEDLES` entfernt.
+  3. **Trennung von Vorbereitung und echtem Dateitransfer:**
+     - `BACKUP_PREPARING_NEEDLES` (`preparing backup`, `scanning your photo library`, `synchronis`) aktualisieren die Aktivität und verhindern Stillstands-Fehlalarme, setzen aber **nicht** `sawActiveBackup = true`.
+     - Nur `BACKUP_ACTIVE_NEEDLES` (`backing up`, `uploading`, `items left`) weisen tatsächlichen Transfer nach.
+  4. **Entschärfung von „Nichts freizugeben“ (`confirmFreeUp`):**
+     - „Nichts freizugeben“ wird nur dann als Verweigerung gewertet, wenn Companion tatsächlich aus einem zweifach bestätigten Sicherungsabschluss (`completeStreak >= 2`) kam.
+     - Kam die Navigation aus der Stillstandserkennung oder vor dem Abschluss, kehrt Companion sofort nach `WAIT_BACKUP` zurück und gibt Google Fotos Zeit für den Upload.
+     - Nach jeder Absage-Runde wird `completeStreak` auf 0 zurückgesetzt, sodass vor einem erneuten Versuch ein frischer Abschluss nachgewiesen werden muss.
+  5. **Bereinigung der 11.959 Falsch-Unbestätigten auf ZimaOS:**
+     - `unverified.csv` wurde auf ZimaOS gesichert (`unverified.csv.bak-20261019`) und geleert.
+     - Alle 11.959 Dateien stehen vollständig in `catalog.csv` und werden nun in regulären 5-GiB-Batches ohne 24-h-Drosselung zügig hochgeladen.
+- **Messergebnis nach Deploy (Companion 1.2.13, Server 3.3.22):**
+  - Unmittelbarer Upload-Wiederanlauf: 218 Dateien (1,63 GiB) in den letzten 24 h erfolgreich gesichert (`completed_bytes_24h = 1.630.881.405`).
+  - Google Fotos und Companion arbeiten stabil im Zyklus; nächste 556 Dateien befinden sich im regulären Upload-Prozess.
+
+## 15. Codeprüfung und Korrekturen vom 2026-10-21 (kein Live-Messstand)
+
+Arbeitsstand Server 3.3.23 / Companion 1.2.14, noch kein Deploy-Nachweis:
+
+- Watchdog: Fortschritt beendet `alert` und löscht `alert_since`, ohne einen zweiten Neustart desselben beobachteten Batches zu erlauben. Messlücken unterbrechen den Alarmzeitraum.
+- Vorzeitige Freigabe: nur für passende `batchIds`, frisches `observedAt` (maximal 150 Sekunden) und mindestens drei Stunden nachgewiesenen Alarm. Alte Statusdateien können keine neuen Batches vorzeitig freigeben. Der normale Timeout und die Zuordnung von Retry-Dateien zu `unverified.csv` bleiben erhalten.
+- Companion: Wiederholte Aktivitäts-/Vorbereitungstexte verschieben `lastProgressAt` nicht mehr. Freigabeprüfungen verwenden eine getrennte Wartefrist.
+- Erfolgsbeleg: nur nach einem von der App bestätigten Freigabeklick und nur für zuvor vorhandene, danach fehlende Dateien. Ohne gespeicherte Freigabeliste kein Nachbuchen anhand bloßer Abwesenheit. Der Server akzeptiert weiterhin nur Rückbelege zu noch vorgemerkten Handreichungen.
+- Teilfreigaben behalten Restdateien und ursprünglichen Timeout-Beginn; Nachlieferungen setzen diesen Beginn nicht zurück.
+
+Diese Aussagen beschreiben Code und lokale Regressionen, keine neue Messung von Latenz, Registerbelegung oder Durchsatz.
+
+Lokale Prüfung: 136 Python-Tests bestanden. Nach dem Gradle-Lauf im lokalen Terminal sind auch alle 24 Android-JUnit-Tests erfolgreich (0 Fehler), die Debug-APK ist als Companion 1.2.14 / versionCode 19 erzeugt. Lint meldet 0 Fehler und 18 Warnungen. Die erzeugten Testberichte, der Lint-Bericht und die APK-Metadaten wurden geprüft. Deployment und Liveprüfung stehen noch aus.
+
+Deployment-Versuch in dieser Sitzung: SSH zu `192.168.178.162:22` und der lokale ADB-Socket werden mit `Operation not permitted` abgewiesen. Es wurden keine NAS-Dienste oder Pixel-Apps verändert. `scripts/deploy.py` bereitet den Aufruf aus dem lokalen Terminal vor: bestehende Compose-Konfiguration mit allen Mounts erhalten, Remote-Image bauen, gestoppten Serverzustand sichern, APK mit App-Daten installieren und Dienste wieder starten. Drei zusätzliche lokale Tests prüfen die Konfigurationserhaltung und den Umgang mit pausierter Überwachung; Remote-Ausführung steht aus.
+
+Erster Terminal-Aufruf: Die NAS ist per SSH erreichbar, aber `docker compose version` scheitert am fehlenden CLI-Plugin. Der Abbruch lag vor Änderungen an NAS-Diensten und Pixel. Das Deploy-Skript erkennt jetzt alternativ `docker-compose` und prüft vorab, ob `up --pull never` unterstützt wird; Start und Wiederherstellung verwenden dieselben kompatiblen Optionen. Neun lokale Deployment-Tests bestanden. Der nächste Terminal-Aufruf muss die tatsächliche Compose-Variante und das Deployment noch bestätigen.
+
+Zweiter Terminal-Aufruf: Auch `docker-compose` ist nicht im SSH-Pfad verfügbar; erneut Abbruch vor Änderungen an Diensten und Pixel. Das Skript sucht nun zusätzlich in den vier üblichen Docker-Plugin-Verzeichnissen. Falls Compose fehlt, lädt es auf dem Mac eine fixierte Linux-Datei (v2.40.3, x86_64/aarch64), prüft den hinterlegten SHA-256-Hash und überträgt sie nach `/DATA/AppData/pixel-photo-uploader/deploy-tools/`. Vor Ausführung erfolgt eine zweite Hash-Prüfung auf der NAS. Bestehende geprüfte Dateien werden wiederverwendet. 15 lokale Deployment-Tests bestanden, einschließlich defekter Downloads und nicht unterstützter Architekturen; keine Netzwerkzugriffe in den Tests. Aufruf weiterhin auf dem Mac, Remote-Deployment weiterhin unbestätigt.

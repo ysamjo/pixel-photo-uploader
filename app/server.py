@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -155,7 +156,7 @@ label{display:block;font-size:12px;color:#6b7480;margin:10px 0 3px}
 input{font:inherit;padding:7px 9px;border:1px solid #c9ced4;border-radius:8px;width:min(460px,100%);box-sizing:border-box}
 .note{font-size:13px;color:#6b7480;margin:8px 0}
 .err{color:#b3261e}.ok{color:#1e7e34}
-pre{background:#12161a;color:#d7dde3;padding:12px;border-radius:8px;font-size:12px;overflow:auto;max-height:330px;margin:0}
+pre{background:#12161a;color:#d7dde3;padding:12px;border-radius:8px;font-size:12px;overflow:auto;max-height:330px;margin:0;white-space:pre-wrap;word-break:break-word}
 """
 
 
@@ -177,7 +178,7 @@ SETUP_DEFAULTS = {
     "ControlRoot": "/data/control", "InboxRoot": "/data/inbox",
     "DropboxRoot": "/data/dropbox", "OneDriveRoot": "/data/onedrive",
     "BatchGiB": "5", "StableSeconds": "120", "RescanMinutes": "360",
-    "DeepRescanDays": "7", "BackupTimeoutHours": "72",
+    "DeepRescanDays": "7", "BackupTimeoutHours": "24",
 }
 
 
@@ -258,10 +259,16 @@ def render_page(info: dict, log_lines=(), message: str = "",
 
     note = f"<p class=\"note {message_kind}\">{_esc(message)}</p>" if message else ""
     log = "\n".join(str(line) for line in log_lines) or "(noch kein Log)"
-    pixel = ("\n".join(str(line) for line in companion_lines)
+    pixel = ("\n".join(compact_companion(companion_lines))
              if info.get("configured") and companion_lines else "")
+    important = ("\n".join(compact_companion(
+                     [l for l in companion_lines if "[FEHLER]" in l or "[PHASE]" in l]))
+                 if info.get("configured") and companion_lines else "")
     pixel_section = (f"<h2>Pixel meldet</h2><section><pre>{_esc(pixel)}</pre></section>"
                      if pixel else "")
+    if important:
+        pixel_section += (f"<h2>Pixel: Phasen und Fehler</h2>"
+                          f"<section><pre>{_esc(important)}</pre></section>")
     watchdog = info.get("photos_watchdog") or {}
     watchdog_section = (f'<h2>Google-Fotos-Wächter</h2><section><p>{_esc(watchdog.get("message"))}</p></section>'
                         if watchdog else "")
@@ -320,6 +327,34 @@ def companion_lines(control_root, limit: int = 15) -> list[str]:
     if not p.is_file():
         return []
     return p.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, limit):]
+
+
+_COMPANION_TIME = re.compile(r"^\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})  (.*)$")
+
+
+def compact_companion(lines) -> list[str]:
+    """Kuerzt Companion-Zeilen fuer die Anzeige: Uhrzeit ohne Datum, Wiederholungen als 'x N'."""
+    result: list[str] = []
+    previous = None
+    count = 0
+    for raw in lines:
+        match = _COMPANION_TIME.match(raw)
+        clock, text = (match.group(1), match.group(2)) if match else ("", raw)
+        if text == previous:
+            count += 1
+            continue
+        if previous is not None:
+            result.append(_companion_line(previous_clock, previous, count))
+        previous, previous_clock, count = text, clock, 1
+    if previous is not None:
+        result.append(_companion_line(previous_clock, previous, count))
+    return result
+
+
+def _companion_line(clock: str, text: str, count: int) -> str:
+    head = f"{clock}  " if clock else ""
+    tail = f"  (x {count})" if count > 1 else ""
+    return f"{head}{text}{tail}"
 
 
 def create_app() -> "FastAPI":

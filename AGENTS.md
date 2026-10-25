@@ -10,7 +10,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Der Uploader rechnet den Rückbeleg ab, markiert die Dateien in `completed.csv` als gesichert und löscht den Batch auf dem Pixel.
 - Sagt Google Fotos zweimal in Folge „Nichts freizugeben", ist das **kein Erfolgsbeleg**: `settle_refused()` führt die Datei als unbestätigt in `unverified.csv` und gibt die Handreichung sofort frei. Die Archiv-Kopie bleibt. Nach 24 h werden unbestätigte Dateien in kleinen Retry-Paketen erneut geprüft; `migrate_refusal_blocks()` verschiebt alte, unbelegte Absagen aus `completed.csv`/`blocked.csv` in dieses Register.
 - Eine offene Handreichung hält die Queue nicht mehr auf: `select_and_stage_batch()` reiht neue Dateien ein, solange die wartenden nicht mehr als die Batch-Kapazität belegen.
-- Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 72 h): Eintrag nach `blocked.csv`, Handreichung freigeben, Archiv-Kopie bleibt. `select_and_stage_batch()` überspricht blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
+- Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 24 h): Eintrag ins Retry-Register `unverified.csv`, Handreichung freigeben, Archiv-Kopie bleibt. Dort wird sie in kleinen Paketen automatisch erneut eingereiht. `select_and_stage_batch()` überspringt blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
 - Läuft eine Handreichungskopie aus dem Batch-Ordner weg, wartet `repair_batches()`
   die `REPAIR_GRACE_SECONDS` (600 s) auf den Rückbeleg, bevor es aus dem Archiv
   nachlegt: Resilio trägt die Freigabe-Löschung des Telefons schneller zurück, als der
@@ -42,7 +42,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 ```bash
 .venv/bin/python -m pytest           # kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.21 .
+docker build -t pixel-photo-uploader:3.3.23 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
@@ -67,7 +67,9 @@ docker compose -f docker-compose.local.yml up -d --build
 - **Reihenfolge Ledger → Löschung:** `_release_staged()` schreibt das Ledger, *bevor* es die
   Handreichungsdatei unlink't. Sähe Resilio die Löschung zuerst, verbuchte die App das
   Verschwinden über `healReceiptFromDisk()` als von Google Fotos freigegeben und der Server
-  bekam einen zweiten, falschen Erfolgsbeleg. Die App ihrerseits merkt sich abgelehnte
+  bekam einen zweiten, falschen Erfolgsbeleg. Seit Companion 1.2.14 setzt auch das
+  Nachbuchen einen persistent bestaetigten Freigabeklick mit Dateiliste voraus;
+  reine Abwesenheit erzeugt keinen Erfolgsbeleg. Die App ihrerseits merkt sich abgelehnte
   Content-Marken (`AppState.refusedTokens`, Schlüssel ist der Zwölfer-Fingerabdruck aus
   `NNNNNN-<fp12>.ext`) und bietet sie weder erneut an noch bucht ihre Löschung.
 - **Resilio-Papierkorb (`.sync/Archive`):** Resilio verschiebt serverseitig gelöschte

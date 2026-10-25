@@ -33,16 +33,41 @@ public class PhotosAccessibilityService extends AccessibilityService {
     // So oft darf Google Fotos „Nichts freizugeben“ melden, bevor wir die Datei als
     // unbestätigt melden und den Server die Handreichung nach seinem Timeout freigeben lassen.
     private static final int NOTHING_TO_FREE_ROUNDS = 2;
-    // Wörter, die eine laufende Sicherung beweisen. Sie heavier als die Fehlerwörter unten:
-    // Promo- und Onboarding-Karten von Google Fotos enthalten Sätze wie „Backup is off“,
-    // während die Sicherung in Wahrheit durchläuft.
+    private static final long BACKUP_STALL_MILLIS = 20 * 60_000L;
+    private static final long FAILED_ITEMS_STALL_MILLIS = 5 * 60_000L;
+    // Wörter, die eine laufende Sicherung beweisen (aktiver Dateitransfer).
     private static final String[] BACKUP_ACTIVE_NEEDLES = {
             "sicherung läuft", "wird gesichert", "werden gesichert", "wird hochgeladen",
             "hochladen läuft", "fotos werden gesichert", "videos werden gesichert",
-            "sicherung wird vorbereitet", "synchronis",
-            "backing up", "preparing backup", "getting ready to back up", "uploading",
-            "items left", "item left", "elemente verbleibend", "element verbleibend", "elemente",
-            "checking time remaining", "remaining time", "keep the app open", "keep app open"
+            "backing up", "uploading",
+            "items left", "item left", "elemente verbleibend", "element verbleibend"
+    };
+    // Vorbereitung und wiederholte Statustexte sind kein messbarer Fortschritt.
+    private static final String[] BACKUP_PREPARING_NEEDLES = {
+            "sicherung wird vorbereitet", "sicherung vorbereiten", "wird vorbereitet",
+            "sicherung wird gestartet", "synchronis",
+            "preparing backup", "getting ready to back up", "checking time remaining",
+            "scanning your photo library", "looking for items to back up",
+            "keep the app open", "keep app open"
+    };
+    private static final String[] BACKUP_COMPLETE_NEEDLES = {
+            "sicherung abgeschlossen", "sicherung vollständig", "alle fotos gesichert",
+            "alle elemente gesichert", "alle medien gesichert",
+            "auf neuestem stand", "sicherung ist aktuell",
+            "synchronisierung abgeschlossen", "synchronisation abgeschlossen",
+            "backup complete", "backup is complete", "sync complete", "all photos backed up",
+            "all photos & videos backed up", "all photos and videos backed up",
+            "everything backed up", "up to date", "backup done"
+    };
+    private static final String[] FAILED_ITEMS_NEEDLES = {
+            "can't be backed up", "cannot be backed up", "couldn't be backed up", "could not be backed up",
+            "können nicht gesichert werden", "kann nicht gesichert werden",
+            "nicht gesichert werden", "nicht sicherbar"
+    };
+    private static final String[] PROFILE_SHEET_NEEDLES = {
+            "manage your google account", "google-konto verwalten",
+            "unlimited storage", "unbegrenzter speicherplatz",
+            "photos settings", "fotos-einstellungen"
     };
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastActionAt = 0L;
@@ -122,8 +147,21 @@ public class PhotosAccessibilityService extends AccessibilityService {
         String all = allText(nodes);
         int remaining = ProgressText.remaining(all);
         if (remaining >= 0) {
-            prefs.edit().putInt("photosRemaining", remaining)
-                    .putLong("photosRemainingAt", System.currentTimeMillis()).apply();
+            int lastRemaining = prefs.getInt("lastRemaining", Integer.MAX_VALUE);
+            long now = System.currentTimeMillis();
+            SharedPreferences.Editor edit = prefs.edit()
+                    .putInt("photosRemaining", remaining)
+                    .putLong("photosRemainingAt", now);
+            edit.putInt("lastRemaining", remaining)
+                    .putLong("lastProgressAt", BackupProgress.observedAt(lastRemaining, remaining,
+                            prefs.getLong("lastProgressAt", now), now));
+            edit.apply();
+        }
+
+        if (containsAny(all, FAILED_ITEMS_NEEDLES) && !prefs.getBoolean("hasFailedItems", false)) {
+            prefs.edit().putBoolean("hasFailedItems", true).apply();
+            AppState.log(this, "Nicht sicherbare Elemente erkannt: „"
+                    + firstMatch(all, FAILED_ITEMS_NEEDLES) + "“.");
         }
 
         String errorHit = firstMatch(all,
@@ -134,7 +172,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 "backup error", "backup failed", "not backed up", "no backup",
                 "kontospeicher voll", "account storage full", "account storage is full",
                 "konnte nicht gesichert", "couldn't back up", "could not back up");
-        if (errorHit != null && !containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
+        if (errorHit != null && !containsAny(all, BACKUP_ACTIVE_NEEDLES) && !containsAny(all, BACKUP_PREPARING_NEEDLES)) {
             // Der gefundene Wortlaut steht in der Meldung: ohne ihn war ein Fehlalarm von
             // einem echten Sicherungsstopp auf dem Gerät nicht zu unterscheiden.
             AppState.phase(this, AppState.PHASE_ERROR,
@@ -183,15 +221,13 @@ public class PhotosAccessibilityService extends AccessibilityService {
     }
 
     private void inspectBackup(List<NodeText> nodes, String all, SharedPreferences prefs) {
+        collapseHeaderCardIfExpanded(nodes);
+        String statusText = backupStatusText(nodes);
+
         // Abschluss zuerst: Enthält ein Abschlussblatt zufällig ein Aktiv-Wort („Elemente“),
         // würde die umgekehrte Reihenfolge den Abschluss endlos vertagen (sawActive + streak=0).
-        if (containsAny(all, "sicherung abgeschlossen", "sicherung vollständig", "alle fotos gesichert",
-                "alle elemente gesichert", "alle medien gesichert",
-                "auf neuestem stand", "sicherung ist aktuell",
-                "synchronisierung abgeschlossen", "synchronisation abgeschlossen",
-                "backup complete", "backup is complete", "sync complete", "all photos backed up",
-                "all photos & videos backed up", "all photos and videos backed up",
-                "everything backed up", "up to date", "backed up", "backup done")) {
+        // Nur echter Status ausserhalb von Header-Karten und Lebenszeit-Zählern wird geprüft.
+        if (containsAny(statusText, BACKUP_COMPLETE_NEEDLES)) {
             clearStuck(prefs);
             boolean sawActive = prefs.getBoolean("sawActiveBackup", false);
             long started = prefs.getLong("batchStartedAt", System.currentTimeMillis());
@@ -209,10 +245,46 @@ public class PhotosAccessibilityService extends AccessibilityService {
             return;
         }
 
+        long now = System.currentTimeMillis();
+        long lastProgressAt = prefs.getLong("lastProgressAt", 0L);
+        if (lastProgressAt == 0L) {
+            lastProgressAt = prefs.getLong("batchStartedAt", now);
+            prefs.edit().putLong("lastProgressAt", lastProgressAt).apply();
+        }
+        boolean hasFailed = prefs.getBoolean("hasFailedItems", false) || containsAny(all, FAILED_ITEMS_NEEDLES);
+        long lastProbeAt = prefs.getLong("lastStallProbeAt", 0L);
+        boolean stalled = BackupProgress.stalled(lastProgressAt, lastProbeAt, now, BACKUP_STALL_MILLIS);
+        boolean failedStalled = hasFailed && BackupProgress.stalled(
+                lastProgressAt, lastProbeAt, now, FAILED_ITEMS_STALL_MILLIS);
+
+        if (stalled || failedStalled) {
+            AppState.log(this, stalled
+                    ? "Sicherungsstillstand: Seit " + (BACKUP_STALL_MILLIS / 60_000L) + " Minuten kein Fortschritt (verbleibend: "
+                            + prefs.getInt("photosRemaining", -1) + "). Suche „Speicherplatz freigeben“."
+                    : "Nicht sicherbare Elemente erkannt („" + firstMatch(all, FAILED_ITEMS_NEEDLES)
+                            + "“). Suche „Speicherplatz freigeben“.");
+            prefs.edit().putLong("lastStallProbeAt", now).apply();
+            AppState.phase(this, AppState.PHASE_OPEN_FREE_UP,
+                    stalled ? "Sicherungsstillstand. Suche „Speicherplatz freigeben“."
+                            : "Nicht sicherbare Elemente erkannt. Suche „Speicherplatz freigeben“.");
+            openFreeUp(nodes, prefs);
+            return;
+        }
+
         if (containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
             clearStuck(prefs);
             prefs.edit().putBoolean("sawActiveBackup", true).putInt("completeStreak", 0)
                     .putInt("recoveryAttempts", 0).apply();
+            if (containsAny(all, PROFILE_SHEET_NEEDLES)) {
+                performGlobalAction(GLOBAL_ACTION_BACK);
+            }
+            return;
+        }
+
+        if (containsAny(all, BACKUP_PREPARING_NEEDLES)) {
+            clearStuck(prefs);
+            prefs.edit().putInt("completeStreak", 0).apply();
+            if (containsAny(all, PROFILE_SHEET_NEEDLES)) performGlobalAction(GLOBAL_ACTION_BACK);
             return;
         }
 
@@ -243,7 +315,6 @@ public class PhotosAccessibilityService extends AccessibilityService {
 
     private void openFreeUp(List<NodeText> nodes, SharedPreferences prefs) {
         if (!reconcileNewFiles(false)) return;
-        if (!claimFreedFiles()) return;
         NodeText free = findFreeUp(nodes);
         if (free != null && System.currentTimeMillis() - lastActionAt > 2_000L && click(free.node)) {
             lastActionAt = System.currentTimeMillis();
@@ -285,13 +356,22 @@ public class PhotosAccessibilityService extends AccessibilityService {
 
     private void confirmFreeUp(List<NodeText> nodes, String all, SharedPreferences prefs) {
         if (!reconcileNewFiles(true)) return;
-        if (!claimFreedFiles()) return;
         if (containsAny(all,
                 "nichts freizugeben", "nothing to free up", "kein speicherplatz freizugeben",
                 "keinen speicherplatz freigeben", "no space to free up", "cannot free up space",
                 "can't free up space", "no items to free up")) {
-            int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
             performGlobalAction(GLOBAL_ACTION_BACK);
+            boolean fromCompletion = prefs.getInt("completeStreak", 0) >= 2;
+            if (!fromCompletion) {
+                // Nicht durch eine bestätigte Sicherungsabschluss-Meldung ausgelöst (z.B. Stall-Erkennung).
+                // Google Fotos lädt den Batch noch hoch. Nicht als Absage werten!
+                AppState.log(this, "Google Fotos meldet „Nichts freizugeben“, während Sicherung noch aussteht. Zurück zu WAIT_BACKUP.");
+                prefs.edit().putLong("lastStallProbeAt", System.currentTimeMillis()).apply();
+                AppState.phase(this, AppState.PHASE_WAIT_BACKUP, "Sicherung läuft noch; warte weiter.");
+                return;
+            }
+            int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
+            prefs.edit().putInt("completeStreak", 0).apply();
             if (refused >= NOTHING_TO_FREE_ROUNDS) {
                 List<String> stuck = new ArrayList<>();
                 for (String line : prefs.getString("batchPaths", "").split("\\n")) {
@@ -305,12 +385,13 @@ public class PhotosAccessibilityService extends AccessibilityService {
                         .putString("pendingReceiptRefused", join(stuck))
                         .putLong("nextAttemptAt", Long.MAX_VALUE).apply();
                 AppState.phase(this, AppState.PHASE_MONITORING,
-                        stuck.size() + " Dateien sind unbestätigt: Google Fotos meldet wiederholt „Nichts freizugeben“. "
+                        stuck.size() + " Dateien sind unbestätigt: Google Fotos meldet wiederholt \u201eNichts freizugeben\u201c. "
                                 + "Kein Erfolgsbeleg; das Urteil wird sofort an den Server übergeben.");
                 return;
             }
             prefs.edit().putLong("nextAttemptAt", System.currentTimeMillis() + 15 * 60_000L)
-                    .putInt("freeUpRound", 0).putInt("nothingToFreeRounds", refused).apply();
+                    .putInt("freeUpRound", 0).putInt("nothingToFreeRounds", refused)
+                    .putInt("completeStreak", 0).apply();
             AppState.phase(this, AppState.PHASE_MONITORING,
                     "Google Fotos meldet „Nichts freizugeben“ (Nothing to free up). "
                             + "Versuch " + refused + "/" + NOTHING_TO_FREE_ROUNDS + " in 15 Minuten.");
@@ -325,7 +406,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
             NodeText positive = findPositiveButton(nodes);
             if (positive != null) {
                 if (System.currentTimeMillis() - lastActionAt < 2_000L) return;
-                if (click(positive.node)) {
+                if (confirmRelease(positive.node, prefs)) {
                     lastActionAt = System.currentTimeMillis();
                     prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 20_000L)
                             .putInt("freeUpRound", 0).apply();
@@ -338,7 +419,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
         NodeText confirm = findConfirm(nodes);
         if (confirm != null) {
             if (System.currentTimeMillis() - lastActionAt < 2_000L) return;
-            if (click(confirm.node)) {
+            if (confirmRelease(confirm.node, prefs)) {
                 lastActionAt = System.currentTimeMillis();
                 prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 20_000L)
                         .putInt("freeUpRound", 0).apply();
@@ -379,8 +460,51 @@ public class PhotosAccessibilityService extends AccessibilityService {
         return null;
     }
 
+    static boolean isLifetimeSummary(String text) {
+        if (text == null) return false;
+        String n = normalize(text);
+        // z.B. "331,459 photos backed up" oder "331.459 Fotos gesichert"
+        return n.matches("(?s).*([0-9]{1,3}([.,][0-9]{3})+|[0-9]{5,})\\s*(photos?|fotos?|videos?|elemente?|medien?|items?).*(backed up|gesichert).*")
+                || n.matches("(?s).*(backed up|gesichert).*([0-9]{1,3}([.,][0-9]{3})+|[0-9]{5,})\\s*(photos?|fotos?|videos?|elemente?|medien?|items?).*");
+    }
+
+    private static String backupStatusText(List<NodeText> nodes) {
+        StringBuilder out = new StringBuilder();
+        for (NodeText item : nodes) {
+            if (item.inHeaderExpansion) continue;
+            if (isLifetimeSummary(item.text)) continue;
+            out.append(item.text).append('\n');
+        }
+        return out.toString();
+    }
+
+    private static void collapseHeaderCardIfExpanded(List<NodeText> nodes) {
+        for (NodeText item : nodes) {
+            if (item.inHeaderExpansion && clickableNode(item.node) != null) {
+                if (containsAny(item.text, "dismiss", "schließen", "ausblenden")
+                        || (item.viewId != null && item.viewId.contains("dismiss"))) {
+                    click(item.node);
+                    return;
+                }
+            }
+        }
+    }
+
     private static void collect(AccessibilityNodeInfo node, List<NodeText> out) {
+        collect(node, out, false);
+    }
+
+    private static void collect(AccessibilityNodeInfo node, List<NodeText> out, boolean inHeaderExpansion) {
         if (node == null) return;
+        String viewId = null;
+        try {
+            CharSequence rawId = node.getViewIdResourceName();
+            if (rawId != null) viewId = rawId.toString();
+        } catch (Exception ignored) { }
+
+        boolean isHeader = inHeaderExpansion
+                || (viewId != null && viewId.contains("photos_home_header_expansion_view"));
+
         String text = "";
         if (node.getText() != null) text += node.getText().toString() + " ";
         if (node.getContentDescription() != null) text += node.getContentDescription().toString() + " ";
@@ -391,14 +515,9 @@ public class PhotosAccessibilityService extends AccessibilityService {
                 if (tip != null) text += tip.toString();
             } catch (Exception ignored) { }
         }
-        String viewId = null;
-        try {
-            CharSequence rawId = node.getViewIdResourceName();
-            if (rawId != null) viewId = rawId.toString();
-        } catch (Exception ignored) { }
         text = normalize(text);
-        if (!text.isEmpty() || viewId != null) out.add(new NodeText(node, text, viewId));
-        for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), out);
+        if (!text.isEmpty() || viewId != null) out.add(new NodeText(node, text, viewId, isHeader));
+        for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), out, isHeader);
     }
 
     private static String allText(List<NodeText> nodes) {
@@ -551,7 +670,12 @@ public class PhotosAccessibilityService extends AccessibilityService {
     }
 
     private static String normalize(String text) {
-        return text == null ? "" : text.trim().toLowerCase(Locale.GERMANY).replace('\u00a0', ' ');
+        return text == null ? "" : text.trim().toLowerCase(Locale.GERMANY)
+                .replace('\u00a0', ' ')
+                .replace('\u2019', '\'')
+                .replace('\u2018', '\'')
+                .replace('´', '\'')
+                .replace('`', '\'');
     }
 
     private static AccessibilityNodeInfo clickableNode(AccessibilityNodeInfo node) {
@@ -568,31 +692,17 @@ public class PhotosAccessibilityService extends AccessibilityService {
         return target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
     }
 
-    private boolean claimFreedFiles() {
-        SharedPreferences prefs = AppState.prefs(this);
-        List<String> paths = new ArrayList<>();
-        for (String line : prefs.getString("batchPaths", "").split("\\n")) {
-            if (!line.trim().isEmpty()) paths.add(line.trim());
+    private boolean confirmRelease(AccessibilityNodeInfo node, SharedPreferences prefs) {
+        List<String> before = new ArrayList<>();
+        for (String path : prefs.getString("batchPaths", "").split("\\n")) {
+            if (!path.isEmpty() && new File(path).isFile() && !AppState.isRefused(this, path)) before.add(path);
         }
-        if (paths.isEmpty()) {
-            AppState.phase(this, AppState.PHASE_ERROR,
-                    "Die vorgemerkte Dateiliste fehlt. Es wurde nichts freigegeben.");
-            return false;
-        }
-        int missing = 0;
-        for (String path : paths) if (!new File(path).exists()) missing++;
-        if (missing == 0) return true;
-        // Fehlende Batchdateien sind der Beleg, dass Google Fotos freigegeben hat — egal, ob
-        // die App selbst oder ein Mensch den Knopf gedrückt hat. Der Rückbeleg richtet sich
-        // ohnehin nach dem tatsächlichen Bestand, also geht die Buchführung nie verloren.
-        prefs.edit().putLong("verifyAfter", System.currentTimeMillis() + 5_000L)
-                .putInt("freeUpRound", 0).apply();
-        AppState.log(this, missing + " von " + paths.size()
-                + " Batchdateien sind vom Pixel verschwunden — Freigabe war erfolgreich.");
-        AppState.phase(this, AppState.PHASE_VERIFY,
-                missing + " von " + paths.size() + " Batchdateien sind vom Pixel verschwunden. "
-                        + "Rückbeleg wird aus dem Dateibestand geschrieben.");
-        return false;
+        if (before.isEmpty()) return false;
+        // Vor dem Klick dauerhaft sichern. Ein Crash vor dessen Bestaetigung erzeugt keinen Erfolg.
+        if (!prefs.edit().putString("releaseSnapshot", join(before))
+                .putBoolean("releaseConfirmed", false).commit()) return false;
+        if (!click(node)) return false;
+        return prefs.edit().putBoolean("releaseConfirmed", true).commit();
     }
 
     private boolean reconcileNewFiles(boolean closeDialog) {
@@ -617,7 +727,8 @@ public class PhotosAccessibilityService extends AccessibilityService {
         scanner.mediaScan(added);
         prefs.edit()
                 .putString("batchPaths", join(merged))
-                .putLong("batchStartedAt", System.currentTimeMillis())
+                .putLong("lastProgressAt", System.currentTimeMillis())
+                .putInt("lastRemaining", Integer.MAX_VALUE)
                 .putBoolean("sawActiveBackup", false)
                 .putInt("completeStreak", 0)
                 .putLong("lastCompleteAt", 0L)
@@ -649,8 +760,9 @@ public class PhotosAccessibilityService extends AccessibilityService {
         final AccessibilityNodeInfo node;
         final String text;
         final String viewId;
-        NodeText(AccessibilityNodeInfo node, String text, String viewId) {
-            this.node = node; this.text = text; this.viewId = viewId;
+        final boolean inHeaderExpansion;
+        NodeText(AccessibilityNodeInfo node, String text, String viewId, boolean inHeaderExpansion) {
+            this.node = node; this.text = text; this.viewId = viewId; this.inHeaderExpansion = inHeaderExpansion;
         }
     }
 }

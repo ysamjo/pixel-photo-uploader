@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -276,10 +278,38 @@ def _release_staged(cfg: dict, staged: list[dict], released: list[dict],
     return len(released)
 
 
+WATCHDOG_ALERT_TIMEOUT_HOURS = 3.0
+
+
+def _watchdog_alert_hours(path: Path | None = None, now: float | None = None,
+                          batch_id: str = "") -> float:
+    """Nur ein frischer, diesem Batch zugeordneter Alarm darf vorzeitig freigeben."""
+    from . import state_root
+    p = path or (state_root() / "photos-watchdog" / "photos-watchdog-status.json")
+    if not p.exists():
+        return 0.0
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        current_time = time.time() if now is None else now
+        observed = float(data["observedAt"])
+        alert_since = float(data["alertSince"])
+        batch_ids = data.get("batchIds")
+        if (data.get("state") == "alert" and isinstance(batch_ids, list)
+                and batch_id and batch_id in batch_ids
+                and math.isfinite(observed) and math.isfinite(alert_since)
+                and 0 <= current_time - observed <= 150
+                and 0 <= alert_since <= observed):
+            return (current_time - alert_since) / 3600.0
+    except Exception:
+        pass
+    return 0.0
+
+
 def expire_staged(cfg: dict, staged_file: Path | None = None,
                   blocked_file: Path | None = None,
                   now: datetime | None = None,
-                  unverified_file: Path | None = None) -> int:
+                  unverified_file: Path | None = None,
+                  watchdog_status_file: Path | None = None) -> int:
     """Release handovers that never got a receipt so they cannot fill the Pixel."""
     staged_file = staged_file or default_staged_path()
     blocked_file = blocked_file or default_blocked_path()
@@ -289,34 +319,43 @@ def expire_staged(cfg: dict, staged_file: Path | None = None,
         return 0
     hours = backup_timeout_hours(cfg)
     reference = now or datetime.now(timezone.utc)
-    expired = [e for e in staged
-               if e.get("State") == "Staged"
-               and _valid_staged_time(str(e.get("StagedUtc", "")))
-               and (reference - _parse_iso(str(e["StagedUtc"]))).total_seconds() / 3600 >= hours]
-    if not expired:
-        return 0
+    ref_ts = reference.timestamp()
+    early: list[dict] = []
+    timed_out: list[dict] = []
+    batch_ids = {str(e.get("BatchId", "")) for e in staged}
+    alert_ages = {batch_id: _watchdog_alert_hours(
+        watchdog_status_file, now=ref_ts, batch_id=batch_id) for batch_id in batch_ids}
+    for entry in staged:
+        if entry.get("State") != "Staged" or not _valid_staged_time(str(entry.get("StagedUtc", ""))):
+            continue
+        age = (reference - _parse_iso(str(entry["StagedUtc"]))).total_seconds() / 3600
+        if age >= hours:
+            timed_out.append(entry)
+        elif (age >= WATCHDOG_ALERT_TIMEOUT_HOURS
+              and alert_ages[str(entry.get("BatchId", ""))] >= WATCHDOG_ALERT_TIMEOUT_HOURS):
+            early.append(entry)
 
-    def record(entries: list[dict]) -> None:
-        retries = [e for e in entries if bool(e.get("VerificationRetry"))]
-        ordinary = [e for e in entries if not bool(e.get("VerificationRetry"))]
-        if ordinary:
-            append_blocked(ordinary, f"No receipt within {hours:g} h", blocked_file)
-        if retries:
-            upsert_unverified(retries,
-                              f"Verification retry got no receipt within {hours:g} h",
-                              unverified_file, retry_hours=UNVERIFIED_RETRY_HOURS)
+    def record_timeout(entries: list[dict]) -> None:
+        # Ohne Rueckbeleg kommt die Datei nicht auf blocked.csv, sondern ins Retry-Register:
+        # sie wird nach UNVERIFIED_RETRY_HOURS in kleinen Paketen wieder eingereiht.
+        upsert_unverified(entries, f"No receipt within {hours:g} h", unverified_file,
+                          retry_hours=UNVERIFIED_RETRY_HOURS)
 
-    count = _release_staged(cfg, staged, expired, f"No receipt within {hours:g} h",
-                            staged_file, record=record)
-    retry_count = sum(1 for e in expired if bool(e.get("VerificationRetry")))
-    blocked_count = count - retry_count
-    if blocked_count:
-        write_log(f"{blocked_count} files got no receipt within {hours:g} h and are now "
-                  f"blocked; their handover copies were released.", "WARN")
-    if retry_count:
-        write_log(f"{retry_count} verification retries got no receipt; their Pixel copies "
-                  f"were released and they remain unverified.", "WARN")
+    count = 0
+    if timed_out:
+        count += _release_staged(cfg, staged, timed_out, f"No receipt within {hours:g} h",
+                                 staged_file, record=record_timeout)
+        staged = load_staged(staged_file)
+        write_log(f"{len(timed_out)} handovers expired after {hours:g} h without a receipt.", "WARN")
+    if early:
+        reason = "Watchdog alert: Google Photos stalled for at least 3 h in this batch"
+        count += _release_staged(cfg, staged, early, reason, staged_file,
+                                record=lambda entries: upsert_unverified(
+                                    entries, reason, unverified_file, retry_hours=UNVERIFIED_RETRY_HOURS))
+        write_log(f"{len(early)} files released due to a fresh batch-specific watchdog alert; "
+                  "moved to unverified for small retry packages.", "WARN")
     return count
+
 
 def settle_refused(cfg: dict, staged_file: Path | None = None,
                    unverified_file: Path | None = None) -> int:
@@ -415,6 +454,7 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         if str(entry.get("BatchId", "")):
             by_batch.setdefault(str(entry["BatchId"]), []).append(entry)
     changed = False
+    abandoned: list[dict] = []
     now = datetime.now(timezone.utc)
     staging_root = Path(str(cfg["StagingRoot"]))
     archive = Path(str(cfg["SourceRoot"]))
@@ -443,6 +483,11 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
                     continue
                 if (now - _parse_iso(str(missing_since))).total_seconds() < REPAIR_GRACE_SECONDS:
                     continue
+                # Grace over and still no receipt: the Pixel cleared this handover
+                # without confirming it. Restocking here would copy 4 GB again, so the
+                # file leaves the queue as blocked; the archive copy stays.
+                abandoned.append(entry)
+                continue
             src = archive / str(entry.get("RelativePath", ""))
             if not src.is_file():
                 raise FileNotFoundError(f"Cannot resume batch handover; source missing: {src}")
@@ -459,7 +504,12 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
             continue
         if all(e.get("State") == "Staged" for e in entries):
             write_batch_markers(staging_root, batch_id, entries)
-    if changed:
+    if abandoned:
+        _release_staged(cfg, staged, abandoned, "Handover copy gone without receipt",
+                        staged_file)
+        write_log(f"{len(abandoned)} handover copies gone without a receipt after the "
+                  f"grace period: blocked, not restocked.", "WARN")
+    elif changed:
         save_staged(staged, staged_file)
 
 
@@ -489,6 +539,8 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     retry_budget = min(room, int(UNVERIFIED_RETRY_GIB * 1024**3))
     catalog_changed = False
 
+    max_file_capacity = int(MAX_BATCH_GIB * 1024**3)
+
     # Verification retries are deliberately small and go first. They are not part
     # of the normal queue, so a large uncertain backlog cannot refill the Pixel.
     due = sorted(due_unverified(unverified_file),
@@ -505,7 +557,14 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             size = int(str(entry.get("Size", "0")) or 0)
         except ValueError:
             continue
-        if size > capacity or selected_bytes + size > room:
+        if size > max_file_capacity:
+            continue
+        if size > capacity:
+            if held_bytes == 0 and not selected:
+                pass
+            else:
+                continue
+        elif selected_bytes + size > room:
             continue
         if retry_fps and retry_bytes + size > retry_budget:
             continue
@@ -546,10 +605,20 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
         if key in unverified or key in staged_fps or key in retry_fps:
             continue
         size = int(entry.get("Size", 0))
-        if size > capacity:
-            write_log(f"Single file larger than batch capacity, skipped: {rel}", "WARN")
+        if size > max_file_capacity:
+            append_blocked([entry], f"File size ({size / 1024**3:.2f} GiB) exceeds Google Photos 10 GB limit")
+            blocked.add(key)
+            write_log(f"File exceeds Google Photos 10 GB limit, blocked: {rel}", "WARN")
+            catalog_changed = True
             continue
-        if selected_bytes + size > room:
+        if size > capacity:
+            # Grosse Einzeldatei (z. B. 5-10 GiB Video wie Hochzeits- oder Familienvideos).
+            # Kann als Solo-Batch uebertragen werden, wenn aktuell kein anderer Batch im Staging wartet.
+            if held_bytes == 0 and not selected:
+                pass
+            else:
+                continue
+        elif selected_bytes + size > room:
             continue
         src = archive / rel
         if not src.is_file():

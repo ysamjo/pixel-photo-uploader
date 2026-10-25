@@ -31,8 +31,10 @@ def test_restart_then_one_hour_cooldown_and_alert_without_loop():
         assert action == "cooldown"
     state, action = tick(state, 7200)
     assert action == "alert"
+    assert state.get("alert_since") == 7200
     state, action = tick(state, 7260, MIN_TX_PROGRESS)
-    assert action == "alert"  # kein zweiter Neustart desselben Batch
+    assert action == "restarted"  # Budget bleibt verbraucht, Alarm endet bei Fortschritt
+    assert "alert_since" not in state
     state, action = tick(state, 7320, batch="batch-b")
     assert action == "tracking"
 
@@ -188,3 +190,60 @@ def test_unknown_metrics_leave_budget_and_status_safe(tmp_path):
     status = cycle(adb, tmp_path / "state.json", True, 1800)
     assert status["state"] == "offline"
     assert adb.restarts == 0
+
+
+@pytest.mark.parametrize("metric", ["tx", "remaining"])
+def test_progress_clears_alert_and_next_stall_does_not_restart(metric):
+    state = {"batch": "batch-a", "stage": "alert", "last_progress": 0,
+             "last_sample": 90, "tx_anchor": 0, "remaining": 13, "alert_since": 10}
+    state, action = tick(state, 100, tx=MIN_TX_PROGRESS if metric == "tx" else 0,
+                         remaining=12 if metric == "remaining" else 13)
+    assert action == "restarted"
+    assert "alert_since" not in state
+    for now in range(160, 1901, 60):
+        state, action = tick(state, now, tx=MIN_TX_PROGRESS if metric == "tx" else 0,
+                             remaining=12 if metric == "remaining" else 13)
+        assert action != "restart"
+    assert action == "cooldown"
+
+
+def test_offline_gap_invalidates_continuous_alert_without_restoring_budget():
+    state = {"batch": "batch-a", "stage": "alert", "last_progress": 0,
+             "last_sample": 90, "tx_anchor": 0, "remaining": 13, "alert_since": 10}
+    state, action = tick(state, 10000, remaining=13)
+    assert action == "restarted"
+    assert "alert_since" not in state
+
+
+def test_status_contains_only_current_sample_batch_ids(tmp_path):
+    adb = FakeAdb()
+    adb.sample = lambda now: Sample("hash", 0, 13, ("20261021-123456",))
+    status = cycle(adb, tmp_path / "state.json", True, 100)
+    assert status["batchIds"] == ["20261021-123456"]
+    adb.sample = lambda now: None
+    assert cycle(adb, tmp_path / "state.json", True, 160)["batchIds"] == []
+
+
+def test_counter_reset_invalidates_alarm_without_restoring_restart_budget():
+    state = {"batch": "batch-a", "stage": "alert", "last_progress": 0,
+             "last_sample": 90, "tx_anchor": MIN_TX_PROGRESS, "remaining": 13, "alert_since": 10}
+    state, action = tick(state, 100, tx=0, remaining=13)
+    assert action == "restarted"
+    assert "alert_since" not in state
+
+
+def test_adb_sample_routes_alarm_to_all_observed_batch_ids(monkeypatch):
+    adb = Adb("adb", "usb-device")
+    def run(*args, **kwargs):
+        if "run-as" in args:
+            return '''<map><boolean name="enabled" value="true"/>
+                <boolean name="safetyAccepted" value="true"/>
+                <string name="phase">WAIT_BACKUP</string>
+                <long name="batchStartedAt" value="1000"/>
+                <string name="batchPaths">/DCIM/PixelSync/staging/Batches/batch-a/a.jpg
+                /DCIM/PixelSync/staging/Batches/batch-b/b.jpg</string></map>'''
+        if "package" in args:
+            return "userId=10141"
+        return "ident=[{type=WIFI}] uid=10141 set=DEFAULT tag=0x0\n st=100 rb=0 tb=0 tp=0"
+    monkeypatch.setattr(adb, "run", run)
+    assert adb.sample(60).batch_ids == ("batch-a", "batch-b")

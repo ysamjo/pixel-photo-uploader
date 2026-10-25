@@ -1,6 +1,24 @@
-# Pixel Photo Companion 1.2.9
+# Pixel Photo Companion 1.2.14
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
+
+## Wiederanlauf und belastbare Rückbelege ab 1.2.14
+
+- Gleichbleibende Aktivitäts- und Vorbereitungstexte setzen die Fortschrittsuhr nicht mehr zurück. Nur ein sinkender Restzähler zählt als gemessener Fortschritt; Freigabeprüfungen haben eine eigene Wartefrist.
+- Vor dem Freigabeklick wird die vorhandene Dateiliste dauerhaft gespeichert. Erst ein erfolgreicher Klick schaltet diese Liste für Erfolgsbelege frei. Fremde Löschungen, Server-Timeouts und alte Zustände ohne diese Liste erzeugen keinen Erfolgsbeleg.
+- Nach einer Teilfreigabe bleiben die übrigen Dateien und der ursprüngliche Timeout-Beginn erhalten. Es wird kein neuer MediaScan für diese Restdateien ausgelöst.
+- Zusammen mit Server 3.3.23: Fortschritt beendet auch einen bereits ausgelösten Watchdog-Alarm. Vorzeitige Serverfreigaben benötigen einen höchstens 150 Sekunden alten Status und eine passende Batch-ID.
+
+## Stillstandserkennung, MediaStore-Bereinigung und Fehlalarm-Schutz ab 1.2.13
+
+- **Automatische MediaStore-Geisterbereinigung (`MediaStoreCleaner`):** Entfernt gelöschte Dateien aus der Android-Mediendatenbank (`Images.Media` und `Video.Media`). Verhindert die permanente 24/7-Schleife „Preparing backup • Scanning your photo library“ nach Resilio-Batchlöschungen.
+- **Filterung von Header-Promo-Karten & Lebenszeit-Zählern:** Promo-Karten („Backup complete • 331,459 photos backed up“) werden nicht mehr fälschlicherweise als Fertigstellung des aktuellen Batches interpretiert und automatisch minimiert.
+- **Trennung von Scan- und Transferzustand:** Vorbereitungs- und Scanphasen („Preparing backup“, „Scanning library“) gelten nicht als aktiver Transfer (`sawActiveBackup`), wodurch die 5-Minuten-Karenzzeit geschützt bleibt. Das bis 1.2.13 enthaltene Zurücksetzen des Stillstandstimers durch diese Texte entfällt ab 1.2.14.
+- **Schutz vor vorzeitigen Absagen („Nichts freizugeben“):** Meldet Google Fotos „Nichts freizugeben“, während Dateien noch hochgeladen werden oder die Navigation aus einem Stillstandsabbruch kam, wird dies nicht als Verweigerung gezählt, sondern die App kehrt zu `WAIT_BACKUP` zurück.
+- **Dialog-Schutz gegen Speicherlecks:** Sobald Google Fotos aktiv sichert, schließt Companion das Profil-Bottom-Sheet sofort per Zurück-Taste (`GLOBAL_ACTION_BACK`). Ein dauerhaft geöffnetes Profilmenü führte in Google Fotos bei hängenden Uploads zu schwerem GC-Thrashing und 150 % CPU-Dauerlast.
+- **Stillstandserkennung:** Companion verfolgt die Zahl der verbleibenden Elemente (`remaining`). Sinkt die Zahl für 20 Minuten nicht (`BACKUP_STALL_MILLIS`), wird Stagnation erkannt.
+- **Nicht sicherbare Elemente („can't be backed up“):** Erkennt Companion Hinweise auf nicht sicherbare Elemente (inklusive englischer/deutscher Formulierungen und typografischer Apostrophe `\u2019`), verkürzt sich die Stillstands-Schwelle auf 5 Minuten (`FAILED_ITEMS_STALL_MILLIS`).
+- **Aktiver Abbruch über Freigabe:** Bei Stillstand erzwingt Companion über `openFreeUp()` die Freigabeprüfung. Alle tatsächlich in der Cloud gesicherten Dateien werden vom Gerät gelöscht und als Erfolgsbeleg an den Server gemeldet; verweigerte Dateien meldet Companion erst nach echten 2 Runden bei bestätigtem Abschluss als unbestätigt.
 
 ## Was die App macht
 
@@ -104,7 +122,7 @@ niemals die komplette Hauptbibliothek:
 
 Keinen zweiten Google-Fotos-Automatiklauf (z. B. den ADB-Dauerbetrieb) gleichzeitig laufen lassen. Sonst bedienen zwei Stellen parallel dieselbe Google-Fotos-Oberfläche. Die Companion-App ersetzt die Google-Fotos-Steuerung; Resilio ersetzt dabei den Transport zum Pixel.
 
-Ohne Rückbeleg gibt der Server die Handreichung nach `BackupTimeoutHours` (Standard 72 h) auf. Die App sieht das als lokal entfernte Datei und schreibt einen Rückbeleg darüber; der Server ignoriert ihn, weil der Eintrag dann schon in `blocked.csv` steht und nicht mehr vorgemerkt ist. Der Zähler „abgeschlossen" auf dem Telefon zählt diese Freigaben mit — die Abrechnung auf dem Server stimmt trotzdem.
+Ohne Rückbeleg gibt der Server die Handreichung nach `BackupTimeoutHours` (Standard 24 h) auf und reiht die Datei später über das Retry-Register erneut ein. Eine solche Resilio-Löschung erzeugt seit 1.2.14 keinen Erfolgsbeleg. Die App bestätigt nur Dateien, die vor ihrem eigenen bestätigten Freigabeklick vorhanden waren und danach fehlen. Bereits serverseitig abgerechnete Handreichungen werden durch verspätete Rückbelege nicht erneut als Erfolg gebucht.
 
 Nach einem Neustart muss das Pixel einmal manuell entsperrt werden. Die App speichert keine PIN und entsperrt das Gerät nicht selbst.
 
@@ -196,7 +214,7 @@ Zusätzlich schließt jetzt ein Fragezeichen *irgendwo* im Text einen Knopfkandi
 Drei weitere Punkte waren für den laufenden Betrieb nötig, weil die Freigabe sonst per Hand erfolgen musste:
 
 - **Google Fotos wird selbst geholt.** Die Automatik hat auf einen Bestätigungsdialog gewartet, den nie jemand geöffnet hatte: Nach einem Neustart oder Zurücksetzen steht das Pixel auf dem Startbildschirm, und ohne Google-Fotos-Fenster ist nichts zu lesen oder zu klicken. Jetzt holt die App Google Fotos selbst nach vorn, spätestens eine Runde vorher.
-- **Der Dateibestand entscheidet, nicht der Klick.** Fehlende Batchdateien waren bisher ein Fehler („eine vorgemerkte Datei fehlt bereits"); jetzt sind sie der Beleg für eine gelungene Freigabe. Der Rückbeleg wird aus dem Bestand geschrieben — auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist oder ein Mensch den Knopf gedrückt hat. Ohne diesen Schritt bliebe Windows auf einem Batch sitzen, dessen Dateien längst hochgeladen sind.
+- **Historischer Stand, seit 1.2.14 ersetzt:** Der Dateibestand entscheidet, nicht der Klick. Fehlende Batchdateien waren bisher ein Fehler („eine vorgemerkte Datei fehlt bereits"); jetzt sind sie der Beleg für eine gelungene Freigabe. Der Rückbeleg wird aus dem Bestand geschrieben — auch nach einer Teilfreigabe und auch dann, wenn die App vorher in einem Fehlerzustand stehen geblieben ist oder ein Mensch den Knopf gedrückt hat. Ohne diesen Schritt bliebe Windows auf einem Batch sitzen, dessen Dateien längst hochgeladen sind.
 - **Ein verlorener Bildschirm ist kein Endzustand.** Statt nach zwei Minuten Wanduhr endgültig zu stoppen, geht die App zurück, sucht den Menüpunkt sechs Mal neu (Fünf-Minuten-Abstand) und meldet den Fehler erst danach. Über Nacht schläft der Bildschirm — das darf die Kette nicht dauerhaft anhalten.
 
 Geprüft auf dem Upload-Pixel `FA69M0305152`: Ein Batch mit 891 Dateien blieb nach einer manuellen Freigabe im Fehlerzustand stehen, ohne je einen Rückbeleg geschrieben zu haben. Nach dem Update meldete die App „589 Dateien lokal freigegeben; Rückbeleg für Windows geschrieben. 302 Dateien blieben erhalten", und im Kontrollordner lag erstmals `receipt-…json` mit 589 Pfaden und `remainingCount: 302`.

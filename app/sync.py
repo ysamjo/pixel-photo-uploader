@@ -10,7 +10,7 @@ from .batches import (confirm_staged, expire_staged, handover_dir, migrate_refus
 from .config import load_config
 from .pipeline import run_import
 from .runner import acquire, holder, release
-from .store import load_catalog, scan_decision, update_catalog
+from .store import load_catalog, promote_unverified_to_completed, scan_decision, update_catalog
 from .util import clamp, write_log
 from . import MAX_DEEP_RESCAN_DAYS, MIN_DEEP_RESCAN_DAYS
 
@@ -80,14 +80,15 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
         migrate_refusal_blocks()
         confirmed = confirm_staged(cfg)
         refused = settle_refused(cfg)
+        promoted = promote_unverified_to_completed()
         blocked = expire_staged(cfg)
         # Belege zuerst, dann auffuellen: was gerade abgerechnet ist, braucht keine
         # Kopie zurueck ins Archiv-Regal.
         repair_batches(cfg)
         staged_count = select_and_stage_batch(cfg)
         return {"import": result, "catalog_files": len(catalog),
-                "confirmed": confirmed, "refused": refused, "blocked": blocked,
-                "staged": staged_count}
+                "confirmed": confirmed, "refused": refused, "promoted": promoted,
+                "blocked": blocked, "staged": staged_count}
     finally:
         release()
 

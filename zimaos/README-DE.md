@@ -47,10 +47,10 @@ Regeln, kurz:
    Telefon hält dabei nie mehr als eine Batchgröße — die Kapazität teilt sich auf
    alle offenen Batches auf.
 6. **Nichts wartet endlos.** Bleibt eine Datei länger als `BackupTimeoutHours`
-   (Standard 72 h) ohne Rückbeleg, wandert sie nach `state/blocked.csv` und die
-   Handreichung wird freigegeben — das Archiv behält seine Kopie. Blockierte
-   Fingerabdrücke werden nie wieder vorgemerkt; zum erneuten Versuch die Zeile
-   in `blocked.csv` löschen.
+   (Standard 24 h) ohne Rückbeleg, wandert sie nach `state/unverified.csv` und die
+   Handreichung wird freigegeben — das Archiv behält seine Kopie. Die Datei wird
+   später automatisch in kleinen Paketen erneut eingereiht. Nur von Hand in
+   `state/blocked.csv` gesperrte Fingerabdrücke werden nie wieder vorgemerkt.
 7. **Eine Absage ist ein Urteil.** Verweigert Google Fotos die Freigabe zweimal
    („Nichts freizugeben"), hält es den Inhalt schon — meist von einem anderen
    Gerät. `settle_refused()` bucht die Datei als *bereits gesichert* nach
