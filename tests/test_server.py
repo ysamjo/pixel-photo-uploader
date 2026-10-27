@@ -36,6 +36,15 @@ def test_zaehler_sind_deutsch_formatiert():
     assert "178104" not in html and "1485.03 GiB" not in html
 
 
+def test_nachtbilanz_zeigt_nur_erfolgsbelege_als_upload():
+    night = {"receipt_bytes": 2 * 1024**3, "receipt_count": 1234,
+             "duplicate_bytes": 1024**3, "ongoing": False}
+    html = render_page(_info(night=night))
+    assert "2,00 GiB</b>letzte Nacht (22–08 Uhr Berlin)" in html
+    assert "1.234 Dateien mit Pixel-Erfolgsbeleg; 1,00 GiB Duplikate separat" in html
+    assert "diese Nacht bisher" in render_page(_info(night={**night, "ongoing": True}))
+
+
 def test_seite_ohne_config_bietet_setup_an(tmp_path):
     html = render_page({"configured": False, "hint": "Noch nicht eingerichtet"})
     assert 'name="SourceRoot"' in html and 'name="StagingRoot"' in html
@@ -151,7 +160,10 @@ def test_setup_ueber_http_und_bitte_danach(client, tmp_path):
     page = client.post("/api/setup", data=form)
     assert page.status_code == 200
     assert "Eingerichtet" in page.text
-    assert client.get("/api/status").json()["configured"] is True
+    status = client.get("/api/status").json()
+    assert status["configured"] is True
+    assert status["night"]["timezone"] == "Europe/Berlin"
+    assert status["night"]["receipt_count"] == 0
 
     queued = client.post("/api/sync", data={"kind": "deep"}, follow_redirects=False)
     assert queued.status_code == 303 and queued.headers["location"] == "/"

@@ -2,6 +2,8 @@
 # Pillow is optional at runtime for EXIF/dimensions, but listed here so
 # Docker + local dev behave the same.
 pillow>=10.0.0
+# IANA-Zeitzonen auch im schlanken Container ohne System-Zeitzonendaten.
+tzdata>=2024.1
 
 # Web status UI (Umbrel opens the port, CLI works without it).
 # server.py tolerates a missing fastapi, but the Docker CMD always starts
