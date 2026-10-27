@@ -35,7 +35,7 @@ Messlücken unterbrechen den nachgewiesenen Alarmzeitraum. Der normale Timeout b
 ## ZimaOS-Einrichtung
 
 ```bash
-docker build -t pixel-photo-uploader:3.3.23 .
+docker build -t pixel-photo-uploader:3.3.24 .
 docker compose -f docker-compose.yml up -d
 ```
 

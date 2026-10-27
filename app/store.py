@@ -116,14 +116,18 @@ def add_completion(entry: dict, fps: set[str], hashes: set[str], reason: str,
 
 
 def completion_totals(path: Path | None = None, now: datetime | None = None,
-                      window_hours: float = 24.0) -> dict:
+                      window_hours: float = 24.0, include_night: bool = False) -> dict:
     """Gesicherte Bytes aus dem Ledger, gesamt und im Zeitfenster.
 
     Grundlage ist `CompletedUtc`. Zeilen ohne brauchbaren Zeitstempel zaehlen nur
     in die Gesamtsumme, nicht ins Fenster.
     """
     p = path or completed_path()
-    cut = (now or datetime.now(timezone.utc)) - timedelta(hours=float(window_hours))
+    current = now or datetime.now(timezone.utc)
+    cut = current - timedelta(hours=float(window_hours))
+    if include_night:
+        from .night_report import count_row, night_window
+        night = night_window(current)
     total_bytes = total_count = recent_bytes = recent_count = 0
     if p.exists():
         with p.open(newline="", encoding="utf-8") as fh:
@@ -134,12 +138,17 @@ def completion_totals(path: Path | None = None, now: datetime | None = None,
                     size = 0
                 total_bytes += size
                 total_count += 1
-                if _parse_iso(str(row.get("CompletedUtc", ""))) >= cut:
+                if cut <= _parse_iso(str(row.get("CompletedUtc", ""))) <= current:
                     recent_bytes += size
                     recent_count += 1
-    return {"bytes": total_bytes, "count": total_count,
-            "recent_bytes": recent_bytes, "recent_count": recent_count,
-            "window_hours": float(window_hours)}
+                if include_night:
+                    count_row(night, row)
+    result = {"bytes": total_bytes, "count": total_count,
+              "recent_bytes": recent_bytes, "recent_count": recent_count,
+              "window_hours": float(window_hours)}
+    if include_night:
+        result["night"] = night
+    return result
 
 
 def load_blocked(path: Path | None = None) -> list[dict]:
@@ -298,7 +307,7 @@ def remove_unverified(fingerprints, path: Path | None = None) -> int:
 
 
 MAX_UNVERIFIED_ATTEMPTS = 3
-UNVERIFIED_PROMOTE_HOURS = 24.0
+UNVERIFIED_PROMOTE_HOURS = 6.0
 
 
 def promote_unverified_to_completed(path: Path | None = None,

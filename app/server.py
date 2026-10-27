@@ -44,7 +44,7 @@ def overview(cfg: dict) -> dict:
     fps, _ = load_completion_sets()
     blocked = blocked_fingerprints()
     unverified = unverified_fingerprints()
-    totals = completion_totals()
+    totals = completion_totals(include_night=True)
     stable_open = [e for e in catalog
                    if str(e.get("Stable")) == "True"
                    and str(e.get("Fingerprint", "")).lower() not in fps
@@ -81,6 +81,7 @@ def overview(cfg: dict) -> dict:
         "completed_bytes": totals["bytes"],
         "completed_bytes_24h": totals["recent_bytes"],
         "completed_24h": totals["recent_count"],
+        "night": totals["night"],
         "staged": len(load_staged()),
         "blocked": len(blocked),
         "unverified": len(unverified),
@@ -206,6 +207,14 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"({_number(info.get('unverified_due'))} retry-bereit)</li>"
             f"<li><b>{_number(info.get('blocked'))}</b>blockiert</li>"
         )
+        night = info.get("night")
+        if night:
+            label = "diese Nacht bisher" if night["ongoing"] else "letzte Nacht"
+            counters += (
+                f"<li><b>{_gib(night['receipt_bytes'])}</b>{label} (22–08 Uhr Berlin)<br>"
+                f"<span>{_number(night['receipt_count'])} Dateien mit Pixel-Erfolgsbeleg; "
+                f"{_gib(night['duplicate_bytes'])} Duplikate separat</span></li>"
+            )
         settings = (
             f"Grundabgleich: alle {_number(info.get('rescan_minutes'))} min &middot; "
             f"Vollabgleich: alle {_num(info.get('deep_rescan_days'))} Tage &middot; "

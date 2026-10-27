@@ -1,6 +1,10 @@
-# Pixel Photo Companion 1.2.14
+# Pixel Photo Companion 1.2.15
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
+
+## Automatisches Schließen von Erfolgs-Dialogen ab 1.2.15
+
+- **Automatisches Schließen von Freigabe-Erfolgsbildschirmen:** Nach dem Bestätigen von „Speicherplatz freigeben“ zeigt Google Fotos einen Vollbild-Dialog („You freed up X GB / Done“ bzw. „dismiss“). Companion 1.2.15 erkennt diesen Dialog automatisch und klickt auf „Done“ / „dismiss“, damit Google Fotos sofort zum Fotostream zurückkehrt und der nächste Batch ohne 20-minütige Stillstandswarnung anlaufen kann.
 
 ## Wiederanlauf und belastbare Rückbelege ab 1.2.14
 

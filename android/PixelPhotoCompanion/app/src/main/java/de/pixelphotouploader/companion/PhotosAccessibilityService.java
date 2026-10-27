@@ -181,9 +181,32 @@ public class PhotosAccessibilityService extends AccessibilityService {
             return;
         }
 
+        if (dismissCompletedFreeUp(nodes, all)) return;
+
         if (AppState.PHASE_WAIT_BACKUP.equals(phase)) inspectBackup(nodes, all, prefs);
         else if (AppState.PHASE_OPEN_FREE_UP.equals(phase)) openFreeUp(nodes, prefs);
         else if (AppState.PHASE_CONFIRM_FREE_UP.equals(phase)) confirmFreeUp(nodes, all, prefs);
+    }
+
+    private boolean dismissCompletedFreeUp(List<NodeText> nodes, String all) {
+        if (!containsAny(all, "freed up", "freigegeben", "free_up_space_completed")) return false;
+        for (NodeText item : nodes) {
+            if (item.viewId != null && (item.viewId.contains("done_button") || item.viewId.contains("close_button"))) {
+                if (click(item.node)) {
+                    AppState.log(this, "Freigabe-Erfolgsbildschirm automatisch geschlossen.");
+                    return true;
+                }
+            }
+        }
+        for (NodeText item : nodes) {
+            if (containsAny(item.text, "done", "fertig") && clickableNode(item.node) != null) {
+                if (click(item.node)) {
+                    AppState.log(this, "Freigabe-Erfolgsbildschirm über Done-Knopf geschlossen.");
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean photosVisible(AccessibilityNodeInfo root) {
