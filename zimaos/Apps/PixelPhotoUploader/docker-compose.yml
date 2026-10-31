@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.24
+    image: pixel-photo-uploader:3.3.25
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -42,7 +42,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.24
+    image: pixel-photo-uploader:3.3.25
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     environment:
@@ -61,7 +61,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   photos-watchdog:
-    image: pixel-photo-uploader:3.3.24
+    image: pixel-photo-uploader:3.3.25
     restart: unless-stopped
     command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
     environment:
@@ -92,7 +92,7 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.24"
+  version: "3.3.25"
   update_at: "2026-10-19"
   release_notes:
     en_US: Early watchdog expiration for persistent stalls and alert_since tracking.
