@@ -51,25 +51,27 @@ gleichzeitig gehen nicht: `acquire()` hält eine Sperre, der zweite wirft
 | Schritt | Was er tut | Warum an dieser Stelle |
 |---|---|---|
 | `preflight` | Schreibprobe in die Übergabe, Batches und Belege zählen | nach dem ersten Pass ohne Schreibprobe — eine Probe pro Minute hält Resilio unnötig busy |
+| `promote_unverified_to_completed` | mehrfach unbestätigte Dateien (Google Photos 7.97+ Absageschleife) als gesichert annehmen | Notfall-Auflösung gegen Deadlocks bei Fotos-Versionen, die Resilio-Dateien nicht freigeben |
 | `run_import` | Dropbox/OneDrive/Eingang sortieren, Duplikate per SHA-256 | Cloud-Eingänge werden beim Import **geleert** (bewusst, so entschieden am 2026-10-05) |
-| `reconcile` | Archiv-Katalog abgleichen | Grundabgleich alle `RescanMinutes` (360), Vollabgleich alle `DeepRescanDays` (30); dazwischen nur gemeldete Pfade |
-| `migrate_refusal_blocks` | alte unbelegte Absagen aus den Ledgern nach `blocked.csv` verschieben | Aufräumen, kein Regelbetrieb |
+| `reconcile` | Archiv-Katalog abgleichen | Grundabgleich alle `RescanMinutes` (360), Vollabgleich alle `DeepRescanDays` (7); dazwischen nur gemeldete Pfade |
+| `migrate_refusal_blocks` | alte unbelegte Absagen aus `blocked.csv`/`completed.csv` nach `unverified.csv` verschieben | Aufräumen, kein Regelbetrieb |
 | `confirm_staged` | Erfolgsbelege abrechnen | **vor** der Nachlage |
 | `settle_refused` | Absagebelege als unbestätigt blockieren und freigeben | **vor** der Nachlage |
 | `expire_staged` | Handreichungen ohne Beleg nach 24 h freigeben (Retry-Register) | **vor** der Nachlage |
-| `repair_batches` | fehlende Handreichungskopien aus dem Archiv ersetzen | zuletzt, und mit Schonfrist |
-| `select_and_stage_batch` | neue Dateien einreihen | braucht die freie Restkapazität aus den drei Schritten davor |
+| `repair_batches` | fehlende Handreichungskopien nach Schonfrist als blocked freigeben, unvollständige Kopien nachlegen | zuletzt, und mit 600 s Schonfrist |
+| `select_and_stage_batch` | neue Dateien einreihen | braucht die freie Restkapazität aus den Schritten davor |
 
 **Der Merksatz:** abgerechnet wird, bevor aufgefüllt wird. Alles, was gerade erst
 abgerechnet ist, braucht keine Kopie zurück.
 
-## 2. Die vier Register und ihre aktuelle Belegung
+## 2. Die fünf Register und ihre Belegung
 
 | Register | Inhalt | Gerade |
 |---|---|---|
 | `catalog.csv` | jede Datei im Archiv (inkl. Altbestand) | 178.099 |
 | `staged.json` | offene Handreichungen aufs Telefon | 609 Dateien in **zwei** Batches: `20261007-150538` (12 / 0,25 GiB) und `20261007-151943` (597 / 4,75 GiB) |
 | `completed.csv` | gesicherte Fingerabdrücke mit Grund | Historischer Messstand; 299 frühere Absagen sind nicht als bewiesene Backups anzusehen |
+| `unverified.csv` | unbestätigte Uploads (Retry nach 24 h oder Absageprüfung) | Wartet auf Neuprüfung in 0,5-GiB-Portionen |
 | `blocked.csv` | dauerhaft aus der Queue | 290 — **ausnahmslos 0-Byte-Dateien** |
 
 `open_stable` 177.371 Dateien / 1.539,7 GiB. Log: `PixelPhotoUploader.log` im
@@ -97,6 +99,14 @@ SHA-256 mit dem Ledger und bucht inhaltliche Zwillinge sofort
 (`batches.py:459`, Grund „Identical content already completed"). Genau so entstand der
 eine Duplikat-Eintrag oben.
 
+Fünfte Notfall-Buchung (`promote_unverified_to_completed`): Google Fotos ab Version 7.97
+bietet per Resilio synchronisierte Dateien nach erfolgreichem Upload unter Umständen
+nicht mehr zur Bereinigung an. Um eine unendliche Absageschleife in `unverified.csv`
+aufzulösen, nimmt der Server unbestätigte Dateien nach `MAX_UNVERIFIED_ATTEMPTS = 3`
+Versuchen oder einer Karenzzeit pragmatisch als gesichert an (`Reason: "Assumed completed
+after ... unverified attempts (Google Photos refuses free-up)"`). Die Archiv-Kopie
+bleibt unverändert erhalten.
+
 Die frühere Annahme, eine Absage beweise bereits vorhandenen Google-Fotos-Inhalt, ist
 mit dem oben ergänzten Produktionsbefund verworfen. Ein SHA-256-Duplikat gilt nur dann
 als abgeschlossen, wenn seine Ursprungsbuchung einen belastbaren Erfolgsbeleg hat.
@@ -118,8 +128,9 @@ genau für diese Lücke da.
 
 ## 5. Die drei Regeln, die daraus folgen
 
-1. **Ledger vor Löschung.** `_release_staged()` schreibt `completed.csv`, *bevor* es
-   die Handreichungsdatei unlink't. Sähe Resilio die Löschung zuerst, verbuchte die
+1. **Ledger vor Löschung.** `_release_staged()` schreibt `blocked.csv` bzw. `unverified.csv`, *bevor* es
+   die Handreichungsdatei unlink't. (Erfolgsbelege nach `completed.csv` bucht ausschließlich
+   `confirm_staged()`). Sähe Resilio die Löschung zuerst, verbuchte die
    App das Verschwinden über `healReceiptFromDisk()` als „Google Fotos hat
    freigegeben" und der Server bekäme einen zweiten, falschen Erfolgsbeleg.
    Ist schon gemessen passiert (zwei Belegpaare refused→removed am 10-06 und 10-07) —
@@ -127,11 +138,14 @@ genau für diese Lücke da.
    App („seit Installation lokal freigegeben") lügt deshalb.
 2. **Belege vor Nachlage.** `sync_once()` rechnet ab, bevor `repair_batches()`
    auffüllt.
-3. **Schonfrist für den Beleg.** `REPAIR_GRACE_SECONDS = 600`: fehlt eine
+3. **Schonfrist für den Beleg.** `REPAIR_GRACE_SECONDS = 600`: Fehlt eine
    Handreichungskopie und der Eintrag gilt als „Staged", setzt `repair_batches()`
-   zuerst `MissingSinceUtc` und wartet. Erst nach zehn Minuten kommt die Kopie aus dem
-   Archiv zurück, und mit ihr fällt das Merkmal wieder weg. Eine unterbrochene Kopie
-   („Copying") hat das Telefon nie erreicht und wird weiterhin **sofort** ersetzt.
+   zuerst `MissingSinceUtc` und wartet. Läuft die Schonfrist von zehn Minuten ohne Beleg
+   ab, markiert der Server die Datei als aufgegeben (`abandoned`), gibt die Handreichung
+   frei und trägt sie in `blocked.csv` ein. Ein erneutes Nachlegen aus dem Archiv
+   unterbleibt bewusst, um keine 4-GiB-Doppellasten und Schleifen auf einem Telefon zu erzeugen,
+   das den Speicher bereits geleert hat. Eine unterbrochene Kopie („Copying") hat das Telefon
+   nie erreicht und wird weiterhin **sofort** ersetzt.
 
 ## 6. Was am 2026-10-07 schief lief — Timeline, gemessen
 
