@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_VERSION = "3.3.24"
+APP_VERSION = "3.3.25"
 APP_BATCH_FOLDER = "Batches"
 
 MIN_BATCH_GIB = 0.25
