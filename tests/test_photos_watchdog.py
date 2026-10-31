@@ -96,6 +96,7 @@ def test_pauses_cleanup_hard_errors_pending_receipts_and_timeout_block_action():
         assert not eligible(prefs | changes, 60)
     assert not eligible(prefs, 72 * 3600 + 2)
     assert eligible(prefs | {"phase": "ERROR", "detail": "Google Fotos zeigt seit 30 Minuten weder Aktivität noch Abschluss"}, 60)
+    assert eligible(prefs | {"phase": "ERROR", "detail": "Google Fotos stagniert seit 60 Minuten ohne Upload-Fortschritt"}, 60)
 
 
 def test_preferences_decode_types_and_missing_counter():
@@ -247,3 +248,15 @@ def test_adb_sample_routes_alarm_to_all_observed_batch_ids(monkeypatch):
         return "ident=[{type=WIFI}] uid=10141 set=DEFAULT tag=0x0\n st=100 rb=0 tb=0 tp=0"
     monkeypatch.setattr(adb, "run", run)
     assert adb.sample(60).batch_ids == ("batch-a", "batch-b")
+
+
+def test_cycle_keyguard_locked_triggers_alert(tmp_path):
+    adb = FakeAdb()
+    adb.sample = lambda now: None
+    adb.last_prefs = {"detail": "Pixel gesperrt – bitte einmal entsperren", "photosRemaining": 42}
+    adb.last_batch_ids = ("20261031-120000",)
+    status = cycle(adb, tmp_path / "state.json", True, 200)
+    assert status["state"] == "alert"
+    assert "gesperrt" in status["message"]
+    assert status["batchIds"] == ["20261031-120000"]
+    assert status["alertSince"] == 200

@@ -152,6 +152,9 @@ public class PhotosAccessibilityService extends AccessibilityService {
             SharedPreferences.Editor edit = prefs.edit()
                     .putInt("photosRemaining", remaining)
                     .putLong("photosRemainingAt", now);
+            if (remaining < lastRemaining) {
+                edit.putInt("unproductiveStallProbes", 0);
+            }
             edit.putInt("lastRemaining", remaining)
                     .putLong("lastProgressAt", BackupProgress.observedAt(lastRemaining, remaining,
                             prefs.getLong("lastProgressAt", now), now));
@@ -297,7 +300,7 @@ public class PhotosAccessibilityService extends AccessibilityService {
         if (containsAny(all, BACKUP_ACTIVE_NEEDLES)) {
             clearStuck(prefs);
             prefs.edit().putBoolean("sawActiveBackup", true).putInt("completeStreak", 0)
-                    .putInt("recoveryAttempts", 0).apply();
+                    .putInt("recoveryAttempts", 0).putInt("unproductiveStallProbes", 0).apply();
             if (containsAny(all, PROFILE_SHEET_NEEDLES)) {
                 performGlobalAction(GLOBAL_ACTION_BACK);
             }
@@ -387,12 +390,24 @@ public class PhotosAccessibilityService extends AccessibilityService {
             boolean fromCompletion = prefs.getInt("completeStreak", 0) >= 2;
             if (!fromCompletion) {
                 // Nicht durch eine bestätigte Sicherungsabschluss-Meldung ausgelöst (z.B. Stall-Erkennung).
-                // Google Fotos lädt den Batch noch hoch. Nicht als Absage werten!
-                AppState.log(this, "Google Fotos meldet „Nichts freizugeben“, während Sicherung noch aussteht. Zurück zu WAIT_BACKUP.");
-                prefs.edit().putLong("lastStallProbeAt", System.currentTimeMillis()).apply();
+                // Google Fotos lädt den Batch noch hoch. Nicht sofort als Absage werten, aber Stagnationsschleife zählen!
+                int unproductive = prefs.getInt("unproductiveStallProbes", 0) + 1;
+                prefs.edit().putLong("lastStallProbeAt", System.currentTimeMillis())
+                        .putInt("unproductiveStallProbes", unproductive).apply();
+                if (unproductive >= 3) {
+                    AppState.log(this, "Google Fotos stagniert seit " + (unproductive * (BACKUP_STALL_MILLIS / 60_000L))
+                            + " Minuten ohne Upload-Fortschritt (wiederholt nichts freizugeben).");
+                    AppState.phase(this, AppState.PHASE_ERROR,
+                            "Google Fotos stagniert seit " + (unproductive * (BACKUP_STALL_MILLIS / 60_000L))
+                                    + " Minuten ohne Upload-Fortschritt (wiederholt nichts freizugeben).");
+                    return;
+                }
+                AppState.log(this, "Google Fotos meldet „Nichts freizugeben“, während Sicherung noch aussteht (Versuch "
+                        + unproductive + "/3). Zurück zu WAIT_BACKUP.");
                 AppState.phase(this, AppState.PHASE_WAIT_BACKUP, "Sicherung läuft noch; warte weiter.");
                 return;
             }
+            prefs.edit().putInt("unproductiveStallProbes", 0).apply();
             int refused = prefs.getInt("nothingToFreeRounds", 0) + 1;
             prefs.edit().putInt("completeStreak", 0).apply();
             if (refused >= NOTHING_TO_FREE_ROUNDS) {

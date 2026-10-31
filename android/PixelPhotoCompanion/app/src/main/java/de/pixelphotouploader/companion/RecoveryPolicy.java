@@ -22,6 +22,7 @@ final class RecoveryPolicy {
         return text.startsWith("überwachungsfehler:")
                 || text.startsWith("google fotos meldet einen sicherungsfehler")
                 || text.startsWith("google fotos zeigt seit 30 minuten")
+                || text.contains("stagniert")
                 || text.contains("ohne eindeutig erkennbaren, klickbaren freigabe-knopf")
                 || text.contains("rückbeleg konnte nicht geschrieben")
                 || text.contains("nicht als rückbeleg übergeben")
