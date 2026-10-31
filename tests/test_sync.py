@@ -112,3 +112,39 @@ def test_rueckbeleg_wird_vor_der_reprovision_gelesen(tmp_path, monkeypatch):
     assert "Re-provided" not in (state / "PixelPhotoUploader.log").read_text(encoding="utf-8")
     assert store.load_staged(state / "staged.json") == []
     assert entry["Fingerprint"] in store.load_completion_sets()[0]
+
+
+def test_promote_unverified_to_completed_respects_threshold(tmp_path, monkeypatch):
+    _roots(tmp_path, monkeypatch)
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    completed_file = tmp_path / "state" / "completed.csv"
+    now = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
+    recent = (now - timedelta(hours=10)).isoformat()
+    old = (now - timedelta(hours=73)).isoformat()
+
+    # 1. Zu jung und zu wenige Versuche: bleibt erhalten
+    row1 = {"Fingerprint": "fp1", "Sha256": "h1", "RelativePath": "2026/1.jpg",
+            "Size": 100, "FirstUnverifiedUtc": recent, "Attempts": "1"}
+    store.save_unverified([row1], unverified_file)
+    promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
+    assert promoted == 0
+    assert len(store.load_unverified(unverified_file)) == 1
+
+    # 2. 3 Versuche erreicht: wird befördert
+    row1["Attempts"] = "3"
+    store.save_unverified([row1], unverified_file)
+    promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
+    assert promoted == 1
+    assert len(store.load_unverified(unverified_file)) == 0
+    fps, hashes = store.load_completion_sets(completed_file)
+    assert "fp1" in fps
+
+    # 3. Über 72 Stunden alt: wird befördert
+    row2 = {"Fingerprint": "fp2", "Sha256": "h2", "RelativePath": "2026/2.jpg",
+            "Size": 200, "FirstUnverifiedUtc": old, "Attempts": "1"}
+    store.save_unverified([row2], unverified_file)
+    promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
+    assert promoted == 1
+    assert len(store.load_unverified(unverified_file)) == 0
+    fps, hashes = store.load_completion_sets(completed_file)
+    assert "fp2" in fps

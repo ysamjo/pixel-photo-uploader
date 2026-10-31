@@ -307,7 +307,7 @@ def remove_unverified(fingerprints, path: Path | None = None) -> int:
 
 
 MAX_UNVERIFIED_ATTEMPTS = 3
-UNVERIFIED_PROMOTE_HOURS = 6.0
+UNVERIFIED_PROMOTE_HOURS = 72.0
 
 
 def promote_unverified_to_completed(path: Path | None = None,

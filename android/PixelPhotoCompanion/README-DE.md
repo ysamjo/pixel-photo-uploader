@@ -1,6 +1,10 @@
-# Pixel Photo Companion 1.2.15
+# Pixel Photo Companion 1.2.16
 
 Android-Begleit-App für ein Google Pixel der ersten Generation, das als dediziertes Uploadgerät für Google Fotos verwendet wird. Die App benötigt kein Root.
+
+## Stagnations-Circuit-Breaker ab 1.2.16
+
+- **Schutz vor 20-Minuten-Stallschleife:** Stagniert Google Fotos beim Upload und meldet bei der Stillstandsprüfung wiederholt „Nichts freizugeben“ (ohne dass zuvor ein Abschluss nachgewiesen wurde), bricht Companion nach 3 erfolglosen Versuchen (60 Minuten) die Endlosschleife ab und wechselt in `PHASE_ERROR` („Google Fotos stagniert...“). Dieser Zustand wird von `RecoveryPolicy` als transient eingestuft und automatisch nach 5/15/30 Minuten neu gestartet bzw. vom ADB-Watchdog behandelt.
 
 ## Automatisches Schließen von Erfolgs-Dialogen ab 1.2.15
 

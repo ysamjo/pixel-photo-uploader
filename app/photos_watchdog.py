@@ -112,11 +112,18 @@ def preferences(xml: str) -> dict:
     return result
 
 
+def is_keyguard_locked(prefs: dict) -> bool:
+    detail = str(prefs.get("detail", "")).lower()
+    return "gesperrt" in detail or "locked" in detail
+
+
 def eligible(prefs: dict, now: float) -> bool:
     # Freigabe- und Belegphasen nie unterbrechen; Pausieren und harte Fehler respektieren.
     phase = prefs.get("phase")
     detail = str(prefs.get("detail", "")).lower()
-    transient_error = phase == "ERROR" and ("seit 30 minuten" in detail or "backup paused" in detail)
+    transient_error = phase == "ERROR" and (
+        "seit 30 minuten" in detail or "backup paused" in detail or "stagniert" in detail
+    )
     return bool(prefs.get("enabled") and prefs.get("safetyAccepted")
                 and prefs.get("batchPaths") and prefs.get("batchStartedAt", 0) > 0
                 and 0 <= now * 1000 - prefs["batchStartedAt"] < 72 * 60 * 60 * 1000
@@ -149,9 +156,12 @@ class Adb:
             raise ValueError("Ziel ist nicht das dedizierte Upload-Pixel; keine Aktion erlaubt")
 
     def sample(self, now: float) -> Sample | None:
-        prefs = preferences(self.run("shell", "run-as", COMPANION, "cat",
-                                    "shared_prefs/pixel_photo_companion.xml"))
-        if not eligible(prefs, now):
+        self.last_prefs = preferences(self.run("shell", "run-as", COMPANION, "cat",
+                                               "shared_prefs/pixel_photo_companion.xml"))
+        batch_paths = self.last_prefs.get("batchPaths") or ""
+        self.last_batch_ids = tuple(sorted(set(re.findall(
+            r"/Batches/([^/\n]+)/", batch_paths, re.IGNORECASE))))
+        if not eligible(self.last_prefs, now):
             return None
         package = self.run("shell", "dumpsys", "package", PHOTOS)
         match = re.search(r"\buserId=(\d+)", package)
@@ -160,15 +170,13 @@ class Adb:
         # Android 10 gibt bei --poll nur 'Forced poll' aus: getrennt abfragen.
         self.run("shell", "dumpsys", "netstats", "--poll")
         tx = wifi_tx(self.run("shell", "dumpsys", "netstats", "--full", "--uid"), int(match[1]))
-        remaining = prefs.get("photosRemaining")
-        observed = prefs.get("photosRemainingAt", 0)
+        remaining = self.last_prefs.get("photosRemaining")
+        observed = self.last_prefs.get("photosRemainingAt", 0)
         if not 0 <= now * 1000 - observed <= 120_000:
             remaining = None
         # Keine Dateinamen im Status; erst ein neuer Batch stellt das Neustartbudget wieder her.
-        batch = batch_key(prefs)
-        batch_ids = tuple(sorted(set(re.findall(
-            r"/Batches/([^/\n]+)/", prefs["batchPaths"], re.IGNORECASE))))
-        return Sample(batch, tx, remaining, batch_ids)
+        batch = batch_key(self.last_prefs)
+        return Sample(batch, tx, remaining, self.last_batch_ids)
 
     def restart_photos(self, expected_batch: str) -> None:
         self.connect()
@@ -211,6 +219,24 @@ def cycle(adb: Adb, state_path: Path, allow_restart: bool, now: float | None = N
         adb.connect()
         sample = adb.sample(now)
         if sample is None:
+            last_prefs = getattr(adb, "last_prefs", {})
+            if is_keyguard_locked(last_prefs):
+                batch_ids = list(getattr(adb, "last_batch_ids", ()))
+                alert_since = state.get("alert_since") or now
+                state["alert_since"] = alert_since
+                save(state_path, state)
+                detail = last_prefs.get("detail", "gesperrt")
+                msg = f"Pixel ist gesperrt („{detail}“). Bitte am Gerät entsperren."
+                status = {"state": "alert", "message": msg, "observedAt": now,
+                          "batchIds": batch_ids,
+                          "txBytes": None,
+                          "remaining": last_prefs.get("photosRemaining"),
+                          "cooldownUntil": state.get("cooldown_until"),
+                          "alertSince": alert_since}
+                adb.report(status)
+                save(state_path.with_name("photos-watchdog-status.json"), status)
+                print(json.dumps(status, ensure_ascii=False), flush=True)
+                return status
             action = "inactive"  # Budget nicht loeschen: Pausieren ist kein neuer Batch.
         else:
             state, action = advance(state, sample, now)

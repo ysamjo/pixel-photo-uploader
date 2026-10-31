@@ -7,6 +7,7 @@ public class RecoveryPolicyTest {
     @Test public void transientErrorsIncludingOldPausedErrorAreRetried() {
         assertTrue(RecoveryPolicy.retryable("Google Fotos meldet einen Sicherungsfehler („backup paused“). Es wurde nichts freigegeben."));
         assertTrue(RecoveryPolicy.retryable("Google Fotos zeigt seit 30 Minuten keinen Menüpunkt."));
+        assertTrue(RecoveryPolicy.retryable("Google Fotos stagniert seit 60 Minuten ohne Upload-Fortschritt (wiederholt nichts freizugeben)."));
         assertTrue(RecoveryPolicy.retryable("6 Versuche ohne eindeutig erkennbaren, klickbaren Freigabe-Knopf."));
         assertTrue(RecoveryPolicy.retryable("Überwachungsfehler: Datenträger vorübergehend nicht verfügbar"));
         assertTrue(RecoveryPolicy.retryable("Dateien wurden lokal freigegeben, aber der Server-Rückbeleg konnte nicht geschrieben werden: IO"));

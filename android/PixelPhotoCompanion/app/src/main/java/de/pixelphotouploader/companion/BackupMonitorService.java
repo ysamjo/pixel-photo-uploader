@@ -176,6 +176,7 @@ public class BackupMonitorService extends Service {
             scanner.mediaScan(offerable);
             edit.putLong("batchStartedAt", System.currentTimeMillis())
                     .putInt("nothingToFreeRounds", 0)
+                    .putInt("unproductiveStallProbes", 0)
                     .putLong("lastProgressAt", System.currentTimeMillis())
                     .putLong("lastStallProbeAt", 0L)
                     .putInt("lastRemaining", Integer.MAX_VALUE)
