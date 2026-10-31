@@ -256,11 +256,13 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
   sie eingeschaltet ist. `keepMonitorAlive()` prüft alle 60 s und startet die
   Überwachung neu, wenn `enabled` gesetzt ist und kein Service läuft. Wer selbst
   pausiert hat, wird nicht geweckt.
-- **`PHASE_ERROR` ist eine Sackgasse, kein Zustand mit Rückweg.** Nichts startet die
-  Schleife daraus wieder — nur „Überwachung starten" oder „Fehler zurücksetzen" in der
-  App (`MainActivity.java:159/162`). Das ist teuer, weil die Fehler-Erkennung
-  **bildschirmtextbasiert** ist: 36 Nadeln (`PhotosAccessibilityService.java:128-137`)
-  entscheiden über Anhalten.
+- **`PHASE_ERROR` und automatische Erholung.** Früher war `PHASE_ERROR` eine strikte
+  Sackgasse ohne Rückweg. Seit Companion 1.2.7 besitzt die App mit `RecoveryPolicy.retryable()`
+  und `recoverError()` eine automatisierte Erholung: Vorübergehende Fehler (Google-Fotos-Sicherungsfehler,
+  30-Minuten-Stillstände, Dialog-Timeouts und I/O-Wackler) werden nach 5, 15 bzw. 30 Minuten
+  automatisch zurückgesetzt und die Überwachungsschleife läuft ohne manuellen Eingriff weiter.
+  Nur permanente fatale Zustände (deaktivierte Sicherung, voller Kontospeicher, 72-Stunden-Batch-Limit)
+  verbleiben dauerhaft in `PHASE_ERROR` und erfordern ein Entsperren oder Hand-Taps in der App.
 - **„backup paused" ist der Idle-Zustand zwischen zwei Portionen, nicht der
   Fehlerzustand der Sicherung.** Das ist die Korrektur eines Satzes, den ich früher in
   diese Datei geschrieben habe (und der dort in §6 jetzt dabeisteht): Ich hielt den Fund
@@ -348,12 +350,15 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
 
 ## 9. Offen — und deine Entscheidung
 
-1. **Video-Kappe — die hast du selbst entschieden** (15:18:58 UTC auf 5,0 GiB). Offene
-   Reste: die zwei Dateien über 5 GiB (13,98 GiB, §8) brauchen entweder 9 GiB Kappe —
-   bei 8,2 GiB freiem Phonespeicher geht das nicht — oder einen getrennten Weg. Die
-   Frage, ob Fotos die Bibliotheksschlange bei 5 GiB hält, hat um 18:05 CEST **eine
-   vorläufige Antwort**: Pill „Backup complete", während unverändert 4,7 GB auf dem
-   Telefon liegen und nichts frei wird (§6).
+1. **Video-Kappe und Riesen-Dateien:** Die Batch-Kappe steht standardmäßig auf 5,0 GiB.
+   Dateien über 5 GiB (z. B. die beiden Videos mit 8,17 GiB und 5,81 GiB) können nicht in
+   reguläre 5-GiB-Batches eingereiht werden.
+   **Architektur-Entscheidung:** Sobald der normale Bestand hochgeladen ist oder für solche
+   Dateien ein Upload ansteht, erfolgt die Sicherung im dedizierten Einzeldatei-Modus:
+   Keine parallelen Batches, Prüfung des real verfügbaren Telefonspeichers, temporäre
+   Anpassung der Handreichungskapazität auf exakt diese eine Datei und anschließende Rückkehr
+   zum 5-GiB-Standard. Reicht der physische Flash-Speicher des Pixel 1 (~24 GiB nutzbar)
+   auch dafür nicht aus, wird die Datei mit Begründung in `blocked.csv` vermerkt.
 2. **Log-Flut — erledigt sich fast von selbst.** Bei 5,0 GiB Kappe sind es noch zwei
    Warnungen je Durchlauf (§8). Die gebündelte Meldung („N Dateien übersprungen,
    größte: X") wäre trotzdem die sauberere Lösung, ist aber kein Blocker mehr.
@@ -381,34 +386,22 @@ es **zwei**: dazu `20261007-151943` mit 599 Einträgen / 4,7 GB.
    - `PHASE_ERROR` bleibt nur für echte Endfälle: Fotos nicht installiert, 72 h ohne
      Beleg, „account storage full".
    - Die Gegenprobe braucht einen **Zähler statt eines Wortlauts** — und den gibt es
-     schon: `noteStuck()` (`:262-276`) meldet einen unbekannten Bildschirm erst nach
-     `STUCK_MILLIS` = 30 min als Fehler. Auf den Nadel-Pfad (`:128-144`) ist derselbe
-     Zähler nie gelegt worden. **Task 6 ist also kein neuer Mechanismus, sondern eine
-     Zeile Verschiebung.** Dazu: „checking time remaining" und „keep the app open" in
-     `BACKUP_ACTIVE_NEEDLES` (`:44-50`), damit das aufgeklappte Backup-Blatt zählt.
-   - `backup paused` und Netzwerk-Wartezustände laufen jetzt über `noteStuck()`;
-     „checking time remaining" und „keep the app open" gelten als Aktivität.
-6. **Was die 5 GiB heute noch brauchen.** Der Batch läuft nicht mehr von allein durch:
-   Er braucht entweder den Fix aus Punkt 5, oder gegen Ende einen Tap auf „Fehler
-   zurücksetzen", damit die App den Dateibestand vergleicht und den Beleg schreibt.
-   **Das ist um 16:23–16:39 UTC zum ersten Mal teuer geworden:** für 106 Dateien kam der
-   Beleg, für die übrigen **503** kam er nie — nach der 600-s-Schonfrist hat der Uploader
-   sie alle aus dem Archiv zurückgelegt (~4,6 GB, gemessen; §6). `healReceiptFromDisk()`
-   entscheidet zwar über den Bestand und nicht über den Bildschirm, aber heilen kann er
-   nur, was er noch auf dem Gerät findet: wenn das Telefon das Batch-Verzeichnis geleert
-   hat, bevor die Sicherung durch war, ist der Bestand weg und der Beleg kann ihn nicht
-   mehr melden.
-   **Neue offene Frage, dein Urteil:** was soll der Uploader mit einer Handreichung, deren
-   Kopien am Stück verschwinden und für die nach der Schonfrist kein Beleg da ist? Heute:
-   still aus dem Archiv nachlegen (§6, 503×). Alternativen: (a) Schonfrist **rauf** auf
-   z. B. 30–60 min, (b) nach der Schonfrist den **Beleg erzwingen** statt nachlegen
-   (ein `refusedPaths`-ähnliches Urteil „Verzeichnis vom Telefon geleert, ohne
-   Freigabebeleg" → `blocked.csv`, Archiv bleibt, keine Doppel-Last für Fotos), oder
-   (c) nachlegen, aber die Datei **einmal** als „zweite Handreichung" zählen, damit der
-   dritte Durchlauf nicht nochmal 4 GB nachschiebt. Meine Empfehlung: **(b) plus (c)** —
-   Nachlegen ist bei 5-GiB-Batches die teuerste Antwort auf ein Telefon, das schon
-   geleert hat, und ohne Zähler läuft die Pipeline in genau dem Loop, der Fotos' Queue
-   jedes Mal neu füllt.
+     schon: `noteStuck()` meldet einen unbekannten Bildschirm erst nach
+     `STUCK_MILLIS` = 30 min als Fehler. Die Phrasen „checking time remaining" und
+     „keep the app open" wurden zunächst als Aktivität gewertet, seit Companion 1.2.13
+     (siehe §14) aber präziser in `BACKUP_PREPARING_NEEDLES` einsortiert: Sie halten die
+     Aktivitäts-Uhr am Leben, gelten aber nicht als bewiesener Datentransfer und umgehen
+     damit nicht fälschlich die Schonfristen.
+6. **Umgang mit verschwundenen Handreichungen ohne Beleg:**
+   Ist eine Handreichungskopie vom Telefon gelöscht worden, ohne dass ein Freigabebeleg
+   eingetroffen ist, entschied früher ein blindes Nachlegen aus dem Archiv (was im Burst
+   4,6 GB erneut über Resilio kopierte).
+   **Heutiger Umsetzungsstand (in `app/batches.py:484-511`):**
+   Nach Ablauf von `REPAIR_GRACE_SECONDS = 600` markiert `repair_batches()` die Dateien als
+   `abandoned`, gibt die Handreichung frei und bucht sie nach `blocked.csv` („Handover copy
+   gone without receipt“). Ein erneutes Nachlegen unterbleibt, um ein Telefon mit vollem Speicher
+   nicht in eine Resilio-Endlosschleife zu treiben. Als Weiterentwicklung ist vorgesehen, diese
+   Dateien nach `unverified.csv` zu migrieren, damit verspätete Belege nachgebucht werden können.
 7. **Die größte offene Zahl: in welchem Regime läuft die Leitung eigentlich?** Gemessen
    sind 0,8–1,1 GiB/h und 0,014 GiB/h **am selben Nachmittag** (§8). Solange das nicht
    entschieden ist, ist jede Monats-Aussage über die 1,6 TB eine Silbe, kein Plan. Der
@@ -603,3 +596,17 @@ Messung am 2026-10-31, 04:43–05:05 CET auf ZimaOS (`192.168.178.162`):
 - **Reparatur:** Compose auf 3.3.25 gesetzt (Mount bleibt), Image auf der NAS gebaut, `docker compose -p pixel-photo-uploader up -d`. Die Labels zeigen jetzt auf die echte Compose-Datei, `deploy.py` findet sie wieder.
 - **Messergebnis:** Erster Batch `20261031-035942` sofort nach dem Neustart; `staged` 175 → 252 in zwei Minuten, `completed_24h` 6 Dateien / 45,4 MB. Der Pixel war durchgehend online (letzte Companion-Zeile 30.10. 15:54); nur ADB fehlt weiterhin, der Wächter steht auf `offline`.
 - **Lehre:** Nach jedem Recreate prüfen, dass `/data/archive/Altbestand` im Container gefüllt ist. Seit 3.3.25 meldet `select_and_stage_batch()` fehlende Archivdateien als WARN, sobald sich der Befund ändert.
+
+## 17. EGM-Review-Befunde & Hänger-Prävention (Companion 1.2.15, Server 3.3.24/3.3.25, Stand 2026-10-31)
+
+Multi-Agenten-Audit (Design Critic & Codebase Auditor) zur Hänger-Vermeidung („damit sie weniger hängen bleibt“):
+
+- **Freigabe-Erfolgsdialog auto-dismissed (Companion 1.2.15):** Google Fotos blieb nach Bestätigung der Speicherfreigabe permanent auf der Erfolgsmeldung („You freed up X GB / Done“) stehen. Dadurch fehlte der Hauptbildschirm und Folge-Batches stagnierten bis zu 20 Minuten im Stillstandstimer. `dismissCompletedFreeUp()` schließt den Dialog nun unmittelbar.
+- **Klarstellung `repair_batches` vs. `blocked.csv`:** Nach Ablauf von `REPAIR_GRACE_SECONDS = 600` legt der Server fehlende Handreichungskopien **nicht** erneut aus dem Archiv nach. Stattdessen werden sie als `abandoned` freigegeben und in `blocked.csv` verbucht („Handover copy gone without receipt“). Dies verhindert teure 4-GiB-Kopierschleifen bei bereits vom Telefon gelöschten Batches. Zur Rettung verspäteter Belege ist mittelfristig die Übernahme nach `unverified.csv` vorgesehen.
+- **Transiente Fehler auto-recovered:** `PHASE_ERROR` ist keine permanente Sackgasse mehr. Companion setzt vorübergehende Fehler (Google-Fotos-Fehler, 30-Minuten-Stillstände, Dialog-Timeouts) nach 5, 15 bzw. 30 Minuten via `RecoveryPolicy` vollautomatisch zurück.
+- **Notfall-Promotion bei Google Fotos 7.97+:** `promote_unverified_to_completed()` nimmt unbestätigte Dateien nach mehrfacher Verweigerung als gesichert an, um Endlosschleifen bei Fotos-Versionen aufzulösen, die Resilio-Dateien nicht zur Freigabe anbieten.
+- **Identifizierte Hänger-Risiken & Schutzmaßnahmen:**
+  1. *Stagnations-Schleife in `WAIT_BACKUP`:* Prüft Companion nach 20 Minuten Stillstand via `openFreeUp()` und meldet Google Fotos „Nichts freizugeben“, kehrt die App derzeit alle 20 Minuten stumm dorthin zurück. Schutz: Nach 3 erfolglosen Null-Proben muss `noteStuck()` auslösen.
+  2. *Keyguard-Sperre im Watchdog:* Gesperrter Bildschirm setzt Companion auf `MONITORING`, wodurch `photos_watchdog` auf passives `inactive` schaltete. Schutz: Keyguard-Sperre muss als sichtbarer Alert gewertet werden.
+  3. *ADB-Messlücken:* Kurze WLAN-ADB-Aussetzer dürfen `alert_since` nicht zurücksetzen, damit der 3-Stunden-Timeout für vorzeitige Freigabe zuverlässig zündet.
+  4. *Rückkopplung für Freispeicher:* Companion muss den realen Telefonspeicher in `companion-log.txt` melden, damit `select_and_stage_batch()` bei < 2 GiB Restkapazität die Queue anhält statt in Resilio-`ENOSPC` zu laufen.
