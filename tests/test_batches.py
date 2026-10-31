@@ -88,6 +88,25 @@ def _state(tmp_path: Path, monkeypatch) -> tuple[dict, Path, Path]:
     return cfg, state / "catalog.csv", state / "staged.json"
 
 
+def test_fehlende_archivdatei_wird_einmal_gemeldet(tmp_path, monkeypatch):
+    """Katalogpfad ohne Datei im Archiv: leerer Lauf, aber mit Warnung - und nur einmal."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    store.save_catalog([{
+        "Fingerprint": "fp-weg", "RelativePath": "weg.jpg", "Size": "100",
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True", "Sha256": "",
+    }], catalog_file)
+    store.save_staged([], staged_file)
+    batches._missing_archive_report = None
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(batches, "write_log",
+                        lambda text, level="INFO": messages.append((level, text)))
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+    assert [m for m in messages if m[0] == "WARN" and "weg.jpg" in m[1]]
+    messages.clear()
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file) == 0
+    assert messages == []
+
+
 def test_katalogzeile_ohne_pfad_feld_knackt_nicht(tmp_path, monkeypatch):
     cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
     catalog_file.write_text(

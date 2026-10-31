@@ -513,6 +513,26 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         save_staged(staged, staged_file)
 
 
+# Katalogpfade ohne Datei im Archiv wurden bisher stumm uebersprungen: die Queue
+# lief dann ueber Tage leer, ohne eine einzige Log-Zeile (Befund 2026-10-31).
+# Gemeldet wird nur ein geaenderter Befund - sonst schriebe jeder 60-s-Durchlauf
+# dieselbe Warnung.
+_missing_archive_report: tuple[int, str] | None = None
+
+
+def _report_missing_archive(missing: list[str]) -> None:
+    global _missing_archive_report
+    if not missing:
+        _missing_archive_report = None
+        return
+    report = (len(missing), missing[0])
+    if report == _missing_archive_report:
+        return
+    _missing_archive_report = report
+    write_log(f"{len(missing)} catalog entries have no archive file and were skipped "
+              f"(first: {missing[0]}); check the archive mount", "WARN")
+
+
 def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
                             staged_file: Path | None = None,
                             unverified_file: Path | None = None) -> int:
@@ -533,6 +553,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     unverified = unverified_fingerprints(unverified_file)
     archive = Path(str(cfg["SourceRoot"]))
     selected: list[dict] = []
+    missing_archive: list[str] = []
     retry_fps: set[str] = set()
     selected_bytes = 0
     retry_bytes = 0
@@ -622,6 +643,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             continue
         src = archive / rel
         if not src.is_file():
+            missing_archive.append(rel)
             continue
         if src.stat().st_size == 0:
             append_blocked([entry], "Empty file - nothing for Google Photos to back up")
@@ -641,6 +663,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
 
     if catalog_changed:
         save_catalog(catalog, catalog_file)
+    _report_missing_archive(missing_archive)
     if not selected:
         return 0
 
