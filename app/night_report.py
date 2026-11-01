@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 
 RECEIPT_REASON = "Android receipt after confirmed Google Photos free-up"
 DUPLICATE_REASON = "Identical content already completed"
+# Kein Beleg: so schreibt promote_unverified_to_completed Zeilen nach einer
+# Freigabe-Verweigerung ins Ledger.
+ASSUMED_PREFIX = "Assumed completed"
 
 
 def night_window(now: datetime | None = None) -> dict:
