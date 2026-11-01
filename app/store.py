@@ -11,6 +11,7 @@ from . import (BULK_PATH_LIMIT, SCAN_PRUNE_GRACE_HOURS, blocked_path, catalog_pa
                completed_path, lastscan_path, staged_path, unverified_path)
 from .fingerprints import fingerprint, is_supported_media, win_roundtrip_utc
 from .media import is_file_ready
+from .night_report import ASSUMED_PREFIX, RECEIPT_REASON
 from .util import write_log
 
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
@@ -115,6 +116,65 @@ def add_completion(entry: dict, fps: set[str], hashes: set[str], reason: str,
     return True
 
 
+SPOT_CHECK_REASON = "Spot check: assumed completion is being verified"
+
+
+def requeue_assumed(limit: int = 30, path: Path | None = None,
+                    unverified: Path | None = None,
+                    now: datetime | None = None) -> list[dict]:
+    """Stichprobe: angenommene Ledger-Zeilen zurueck in die Pruefung schicken.
+
+    Die Zeilen verschwinden aus `completed.csv` und landen sofort faellig in
+    `unverified.csv`; `select_and_stage_batch()` legt sie als kleine
+    Pruef-Handreichung nach. Damit laesst sich messen, ob Google Fotos die
+    Dateien wirklich schon hat - die blosse Abwesenheit eines Belegs sagt es nicht.
+    """
+    p = path or completed_path()
+    if limit <= 0 or not p.exists():
+        return []
+    rows: list[dict] = []
+    with p.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    chosen = [r for r in rows if str(r.get("Reason", "")).startswith(ASSUMED_PREFIX)]
+    chosen.sort(key=lambda r: str(r.get("CompletedUtc", "")))
+    chosen = chosen[:limit]
+    if not chosen:
+        return []
+    keys = {str(r.get("Fingerprint", "")).lower() for r in chosen}
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=COMPLETED_FIELDS)
+        w.writeheader()
+        for row in rows:
+            if str(row.get("Fingerprint", "")).lower() not in keys:
+                w.writerow({k: row.get(k, "") for k in COMPLETED_FIELDS})
+    tmp.replace(p)
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
+    pending = load_unverified(unverified)
+    known = {str(r.get("Fingerprint", "")).lower() for r in pending}
+    added = 0
+    for row in chosen:
+        key = str(row.get("Fingerprint", "")).lower()
+        if key in known:
+            continue
+        pending.append({
+            "Fingerprint": str(row.get("Fingerprint", "")),
+            "Sha256": str(row.get("Sha256", "")),
+            "RelativePath": str(row.get("RelativePath", "")),
+            "Size": str(row.get("Size", "")),
+            "FirstUnverifiedUtc": stamp,
+            "LastAttemptUtc": stamp,
+            "RetryAfterUtc": stamp,
+            "Attempts": "1",
+            "Reason": SPOT_CHECK_REASON,
+        })
+        added += 1
+    save_unverified(pending, unverified)
+    write_log(f"{added} assumed completions moved back into verification "
+              f"(spot check, {limit} requested).", "WARN")
+    return chosen[:added]
+
+
 def completion_totals(path: Path | None = None, now: datetime | None = None,
                       window_hours: float = 24.0, include_night: bool = False) -> dict:
     """Gesicherte Bytes aus dem Ledger, gesamt und im Zeitfenster.
@@ -129,6 +189,9 @@ def completion_totals(path: Path | None = None, now: datetime | None = None,
         from .night_report import count_row, night_window
         night = night_window(current)
     total_bytes = total_count = recent_bytes = recent_count = 0
+    verified = assumed = 0
+    verified_count = assumed_count = 0
+    recent_verified = recent_assumed = 0
     if p.exists():
         with p.open(newline="", encoding="utf-8") as fh:
             for row in csv.DictReader(fh):
@@ -138,13 +201,33 @@ def completion_totals(path: Path | None = None, now: datetime | None = None,
                     size = 0
                 total_bytes += size
                 total_count += 1
+                reason = str(row.get("Reason", ""))
+                # Nur der Android-Rueckbeleg ist ein Beleg. "Assumed completed"
+                # entsteht, wenn Google Fotos die Freigabe verweigert - die Zeile
+                # zaehlt im Ledger, darf aber nicht als hochgeladen gelten.
+                belegt = reason == RECEIPT_REASON
+                angenommen = reason.startswith(ASSUMED_PREFIX)
+                if belegt:
+                    verified += size
+                    verified_count += 1
+                elif angenommen:
+                    assumed += size
+                    assumed_count += 1
                 if cut <= _parse_iso(str(row.get("CompletedUtc", ""))) <= current:
                     recent_bytes += size
                     recent_count += 1
+                    if belegt:
+                        recent_verified += size
+                    elif angenommen:
+                        recent_assumed += size
                 if include_night:
                     count_row(night, row)
     result = {"bytes": total_bytes, "count": total_count,
               "recent_bytes": recent_bytes, "recent_count": recent_count,
+              "verified_bytes": verified, "verified_count": verified_count,
+              "assumed_bytes": assumed, "assumed_count": assumed_count,
+              "recent_verified_bytes": recent_verified,
+              "recent_assumed_bytes": recent_assumed,
               "window_hours": float(window_hours)}
     if include_night:
         result["night"] = night

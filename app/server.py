@@ -81,6 +81,13 @@ def overview(cfg: dict) -> dict:
         "completed_bytes": totals["bytes"],
         "completed_bytes_24h": totals["recent_bytes"],
         "completed_24h": totals["recent_count"],
+        # Belegt vs. angenommen: "Assumed completed" ist kein Erfolgsbeleg.
+        "completed_verified_bytes": totals["verified_bytes"],
+        "completed_verified_count": totals["verified_count"],
+        "completed_assumed_bytes": totals["assumed_bytes"],
+        "completed_assumed_count": totals["assumed_count"],
+        "completed_verified_bytes_24h": totals["recent_verified_bytes"],
+        "completed_assumed_bytes_24h": totals["recent_assumed_bytes"],
         "night": totals["night"],
         "staged": len(load_staged()),
         "blocked": len(blocked),
@@ -201,8 +208,13 @@ def render_page(info: dict, log_lines=(), message: str = "",
             f"<li><b>{_number(info.get('open_stable'))}</b>offen ({_gib(info.get('open_bytes'))})</li>"
             f"<li><b>{_number(info.get('staged'))}</b>auf dem Pixel</li>"
             f"<li><b>{_number(info.get('completed'))}</b>abgeschlossen</li>"
-            f"<li><b>{_gib(info.get('completed_bytes'))}</b>hochgeladen</li>"
-            f"<li><b>{_gib(info.get('completed_bytes_24h'))}</b>in den letzten 24 h</li>"
+            f"<li><b>{_gib(info.get('completed_verified_bytes'))}</b>belegt hochgeladen<br>"
+            f"<span>{_number(info.get('completed_verified_count'))} Dateien mit Rückbeleg</span></li>"
+            f"<li><b>{_gib(info.get('completed_assumed_bytes'))}</b>nur angenommen<br>"
+            f"<span>{_number(info.get('completed_assumed_count'))} Dateien ohne Beleg, "
+            f"Archiv-Kopie bleibt</span></li>"
+            f"<li><b>{_gib(info.get('completed_verified_bytes_24h'))}</b>belegt in den letzten 24 h<br>"
+            f"<span>{_gib(info.get('completed_assumed_bytes_24h'))} davon angenommen</span></li>"
             f"<li><b>{_number(info.get('unverified'))}</b>unbestätigt "
             f"({_number(info.get('unverified_due'))} retry-bereit)</li>"
             f"<li><b>{_number(info.get('blocked'))}</b>blockiert</li>"
