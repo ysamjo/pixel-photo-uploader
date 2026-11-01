@@ -395,9 +395,11 @@ def test_restaging_setzt_urspruengliche_timeout_uhr_nicht_zurueck(tmp_path, monk
      / staged[0]["StagedName"]).unlink()
 
     batches.repair_batches(cfg, staged_file)
-    # Nach der Frist wird blockiert, nicht nachgelegt - die Uhr bleibt unberuehrt.
+    # Nach der Frist wird nicht mehr blockiert, sondern ins unverified Retry-Register uebertragen.
     assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
-    assert blocked_file.exists()
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    assert unverified_file.exists()
+    assert any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_unverified(unverified_file))
     assert first_time == "2026-01-01T00:00:00+00:00"
 
 
@@ -537,13 +539,16 @@ def test_repair_wartet_auf_den_beleg_statt_sofort_zurueckzukopieren(tmp_path, mo
     batches.repair_batches(cfg, staged_file)
     assert not copy.exists()
     assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
-    assert blocked_file.exists()
+    assert not blocked_file.exists()
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    assert unverified_file.exists()
+    assert any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_unverified(unverified_file))
 
 
 def test_repair_erkennt_beschaedigte_oder_leere_dateien(tmp_path, monkeypatch):
     """Eine 0-Byte- oder abweichende Kopie im Batch ist keine Freigabe, sondern
     eine fehlerhafte Datei. Sie wird wie eine fehlende behandelt und nach der Frist
-    blockiert, nicht aus dem Archiv nachgelegt."""
+    nach unverified uebertragen, nicht aus dem Archiv nachgelegt."""
     cfg, staged_file, blocked_file = _two_in_one_batch(tmp_path, monkeypatch)
     staged = store.load_staged(staged_file)
     batch = batches.batch_dir(Path(cfg["StagingRoot"]), staged[0]["BatchId"])
@@ -557,7 +562,10 @@ def test_repair_erkennt_beschaedigte_oder_leere_dateien(tmp_path, monkeypatch):
     _missing_since(staged_file, "fp-a.jpg", batches.REPAIR_GRACE_SECONDS + 1)
     batches.repair_batches(cfg, staged_file)
     assert not any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_staged(staged_file))
-    assert blocked_file.exists()
+    assert not blocked_file.exists()
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    assert unverified_file.exists()
+    assert any(e["Fingerprint"] == "fp-a.jpg" for e in store.load_unverified(unverified_file))
 
 
 def test_expire_staged_vorzeitig_bei_persistenter_watchdog_warnung(tmp_path, monkeypatch):
@@ -750,4 +758,91 @@ def test_regular_timeout_keeps_its_policy_even_with_matching_watchdog_alert(tmp_
     assert store.load_blocked(blocked_file) == []
     rows = store.load_unverified(tmp_path / "state" / "unverified.csv")
     assert len(rows) == 2
-    assert all(row["Reason"] == "No receipt within 24 h" for row in rows)
+
+
+def test_migrate_abandoned_blocks(tmp_path, monkeypatch):
+    _state(tmp_path, monkeypatch)
+    blocked_file = tmp_path / "state" / "blocked.csv"
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    rows = [
+        {"Fingerprint": "fp-abandoned", "Sha256": "hash-a", "RelativePath": "a.jpg",
+         "Size": "100", "BlockedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "Handover copy gone without receipt"},
+        {"Fingerprint": "fp-timeout", "Sha256": "hash-b", "RelativePath": "b.jpg",
+         "Size": "200", "BlockedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "No receipt within 72 h"},
+        {"Fingerprint": "fp-empty", "Sha256": "hash-c", "RelativePath": "c.jpg",
+         "Size": "0", "BlockedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "Empty file - nothing for Google Photos to back up"},
+        {"Fingerprint": "fp-manual", "Sha256": "hash-d", "RelativePath": "d.jpg",
+         "Size": "50", "BlockedUtc": "2026-01-01T00:00:00+00:00",
+         "Reason": "Manuell gesperrt"},
+    ]
+    store.save_blocked(rows, blocked_file)
+
+    migrated = batches.migrate_abandoned_blocks(blocked_file, unverified_file)
+    assert migrated == 2
+
+    # Kept in blocked: only genuine blocks
+    remaining = store.load_blocked(blocked_file)
+    assert {r["Fingerprint"] for r in remaining} == {"fp-empty", "fp-manual"}
+
+    # Moved to unverified:
+    unverified = store.load_unverified(unverified_file)
+    assert {r["Fingerprint"] for r in unverified} == {"fp-abandoned", "fp-timeout"}
+    assert all(r["Attempts"] == "1" for r in unverified)
+
+    # Calling again should migrate 0:
+    assert batches.migrate_abandoned_blocks(blocked_file, unverified_file) == 0
+
+
+def test_select_and_stage_batch_prioritizes_fresh_over_unverified(tmp_path, monkeypatch):
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    archive = Path(cfg["SourceRoot"])
+
+    # Create fresh file
+    (archive / "fresh.jpg").write_bytes(os_bytes("fresh.jpg"))
+    # Create unverified retry file
+    (archive / "retry.jpg").write_bytes(os_bytes("retry.jpg"))
+
+    fresh_entry = {
+        "Fingerprint": "fp-fresh", "Sha256": "", "RelativePath": "fresh.jpg",
+        "Size": str(len(os_bytes("fresh.jpg"))), "LastWriteUtc": "2024-01-01T00:00:00+00:00",
+        "Stable": "True",
+    }
+    retry_entry = {
+        "Fingerprint": "fp-retry", "Sha256": "", "RelativePath": "retry.jpg",
+        "Size": str(len(os_bytes("retry.jpg"))), "LastWriteUtc": "2024-01-01T00:00:00+00:00",
+        "Stable": "True",
+    }
+    store.save_catalog([fresh_entry, retry_entry], catalog_file)
+    store.save_staged([], staged_file)
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    store.save_unverified([{
+        "Fingerprint": "fp-retry", "Sha256": "", "RelativePath": "retry.jpg",
+        "Size": str(len(os_bytes("retry.jpg"))),
+        "FirstUnverifiedUtc": "2026-01-01T00:00:00+00:00",
+        "LastAttemptUtc": "2026-01-01T00:00:00+00:00",
+        "RetryAfterUtc": "2026-01-01T00:00:00+00:00",
+        "Attempts": "1", "Reason": "Handover copy gone without receipt",
+    }], unverified_file)
+
+    # 1. As long as fresh items are in catalog, fresh is staged and retry is NOT staged
+    staged_count = batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file)
+    assert staged_count == 1
+    staged = store.load_staged(staged_file)
+    assert staged[0]["Fingerprint"] == "fp-fresh"
+    assert staged[0].get("VerificationRetry") is not True
+
+    # 2. Simulate fresh item completing
+    completed_file = tmp_path / "state" / "completed.csv"
+    store.add_completion(fresh_entry, set(), set(),
+                         "Android receipt after confirmed Google Photos free-up", completed_file)
+    store.save_staged([], staged_file)
+
+    # 3. Now no fresh items are left in catalog - retry at the end of queue is picked up
+    staged_count2 = batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file)
+    assert staged_count2 == 1
+    staged2 = store.load_staged(staged_file)
+    assert staged2[0]["Fingerprint"] == "fp-retry"
+    assert staged2[0].get("VerificationRetry") is True

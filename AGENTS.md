@@ -10,13 +10,15 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 - Der Uploader rechnet den Rückbeleg ab, markiert die Dateien in `completed.csv` als gesichert und löscht den Batch auf dem Pixel.
 - Sagt Google Fotos zweimal in Folge „Nichts freizugeben", ist das **kein Erfolgsbeleg**: `settle_refused()` führt die Datei als unbestätigt in `unverified.csv` und gibt die Handreichung sofort frei. Die Archiv-Kopie bleibt. Nach 24 h werden unbestätigte Dateien in kleinen Retry-Paketen erneut geprüft; `migrate_refusal_blocks()` verschiebt alte, unbelegte Absagen aus `completed.csv`/`blocked.csv` in dieses Register.
 - Eine offene Handreichung hält die Queue nicht mehr auf: `select_and_stage_batch()` reiht neue Dateien ein, solange die wartenden nicht mehr als die Batch-Kapazität belegen.
-- Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 24 h): Eintrag ins Retry-Register `unverified.csv`, Handreichung freigeben, Archiv-Kopie bleibt. Dort wird sie in kleinen Paketen automatisch erneut eingereiht. `select_and_stage_batch()` überspringt blockierte Fingerabdrücke, sonst blockiert eine abgelehnte Datei die ganze Queue.
+- Bleibt eine Datei ohne Rückbeleg, endet die Handreichung nach `BackupTimeoutHours` (Standard 24 h): Eintrag ins Retry-Register `unverified.csv`, Handreichung freigeben, Archiv-Kopie bleibt. `select_and_stage_batch()` zieht frische Katalogdateien zuerst ein und reiht bereits probierte oder unbestätigte Dateien erst wieder ein, wenn keine neuen Bilder mehr vorhanden sind.
 - Läuft eine Handreichungskopie aus dem Batch-Ordner weg, wartet `repair_batches()`
-  die `REPAIR_GRACE_SECONDS` (600 s) auf den Rückbeleg, bevor es aus dem Archiv
-  nachlegt: Resilio trägt die Freigabe-Löschung des Telefons schneller zurück, als der
-  Beleg des Pixels läuft, und ein sofortiges Nachlegen würde eine gelungene
-  Speicherfreigabe mit eigenen Händen rückgängig machen. Deshalb rechnet `sync_once()`
-  erst ab (`confirm_staged`/`settle_refused`) und füllt danach auf.
+  die `REPAIR_GRACE_SECONDS` (1800 s) auf den Rückbeleg, bevor es entscheidet: Resilio
+  trägt die Freigabe-Löschung des Telefons schneller zurück, als der Beleg des Pixels
+  eintrifft. Kommt auch nach der Frist kein Beleg, wird die Datei nicht blockiert,
+  sondern ins Wiederholungsregister `unverified.csv` am Ende der Queue überführt.
+  `migrate_abandoned_blocks()` holt alte abgebrochene Handreichungskopien und Timeouts
+  aus `blocked.csv` dorthin zurück. Deshalb rechnet `sync_once()` erst ab
+  (`confirm_staged`/`settle_refused`) und füllt danach auf.
 - Läuft 24/7 als ZimaOS-Container mit integriertem Web-UI und Hintergrund-Watcher.
 - Die Statusseite zählt Katalog, offen, Handreichungen, abgeschlossen, **hochgeladen
   (GiB, gesamt und letzte 24 h aus `completed.csv`)**, unbestätigt und blockiert.
@@ -42,7 +44,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 ```bash
 .venv/bin/python -m pytest           # kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.24 .
+docker build -t pixel-photo-uploader:3.3.27 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
