@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import APP_BATCH_FOLDER
-from .batches import (confirm_staged, expire_staged, handover_dir, migrate_refusal_blocks,
-                      repair_batches, select_and_stage_batch, settle_refused)
+from .batches import (confirm_staged, expire_staged, handover_dir, migrate_abandoned_blocks,
+                      migrate_refusal_blocks, repair_batches, select_and_stage_batch, settle_refused)
 from .config import load_config
 from .pipeline import run_import
 from .runner import acquire, holder, release
@@ -78,6 +78,7 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
         result = run_import(cfg)
         catalog = reconcile(cfg, result.get("archive_paths", ()), force_deep=force_deep)
         migrate_refusal_blocks()
+        migrate_abandoned_blocks()
         confirmed = confirm_staged(cfg)
         refused = settle_refused(cfg)
         promoted = promote_unverified_to_completed()

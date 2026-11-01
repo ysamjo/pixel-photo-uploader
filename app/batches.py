@@ -42,7 +42,7 @@ UNVERIFIED_RETRY_GIB = 0.5
 # Handreichungskopie ist also mehrere Durchlaeufe lang ohne Rueckbeleg sichtbar -
 # und genau die Zeit gibt repair_batches dem Beleg, bevor aus dem Archiv nachgelegt
 # wird. 600 s sind gut das Doppelte der langsamsten gemessenen Uebertragung.
-REPAIR_GRACE_SECONDS = 600.0
+REPAIR_GRACE_SECONDS = 1800.0
 
 
 def batch_dir(staging_root: Path, batch_id: str) -> Path:
@@ -439,6 +439,57 @@ def migrate_refusal_blocks(blocked_file: Path | None = None,
                   "their archive copies remain and no Pixel space is held.", "WARN")
     return len(migrated)
 
+
+ABANDONED_REASONS = {
+    "Handover copy gone without receipt",
+}
+
+
+def migrate_abandoned_blocks(blocked_file: Path | None = None,
+                             unverified_file: Path | None = None) -> int:
+    """Move handover-copy-gone and timeout rows from blocked.csv to retryable unverified.csv (queue tail)."""
+    blocked_file = blocked_file or default_blocked_path()
+    unverified_file = unverified_file or default_unverified_path()
+
+    blocked_rows = load_blocked(blocked_file)
+    if not blocked_rows:
+        return 0
+
+    to_migrate: list[dict] = []
+    kept_blocked: list[dict] = []
+    for r in blocked_rows:
+        reason = str(r.get("Reason", "")).strip()
+        if reason in ABANDONED_REASONS or reason.startswith("No receipt within"):
+            to_migrate.append(r)
+        else:
+            kept_blocked.append(r)
+
+    if not to_migrate:
+        return 0
+
+    save_blocked(kept_blocked, blocked_file)
+    now = datetime.now(timezone.utc)
+    converted: list[dict] = []
+    for r in to_migrate:
+        first_utc = r.get("StagedUtc") or r.get("BlockedUtc") or now.isoformat()
+        last_utc = r.get("BlockedUtc") or r.get("StagedUtc") or now.isoformat()
+        converted.append({
+            "Fingerprint": r.get("Fingerprint", ""),
+            "Sha256": r.get("Sha256", ""),
+            "RelativePath": r.get("RelativePath", ""),
+            "Size": r.get("Size", "0"),
+            "FirstUnverifiedUtc": first_utc,
+            "LastAttemptUtc": last_utc,
+            "RetryAfterUtc": last_utc,
+            "Attempts": "1",
+            "Reason": r.get("Reason", "Handover copy gone without receipt"),
+        })
+    upsert_unverified(converted, "Handover copy gone without receipt", unverified_file, retry_hours=0)
+    write_log(f"Migrated {len(converted)} abandoned/timeout entries from blocked.csv "
+              "to unverified.csv (queue tail).", "OK")
+    return len(converted)
+
+
 def _is_intact(path: Path, expected_size: int) -> bool:
     try:
         return path.is_file() and (expected_size <= 0 or path.stat().st_size == expected_size)
@@ -446,8 +497,10 @@ def _is_intact(path: Path, expected_size: int) -> bool:
         return False
 
 
-def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
+def repair_batches(cfg: dict, staged_file: Path | None = None,
+                   unverified_file: Path | None = None) -> None:
     staged_file = staged_file or default_staged_path()
+    unverified_file = unverified_file or default_unverified_path()
     staged = load_staged(staged_file)
     by_batch: dict[str, list[dict]] = {}
     for entry in staged:
@@ -485,7 +538,7 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
                     continue
                 # Grace over and still no receipt: the Pixel cleared this handover
                 # without confirming it. Restocking here would copy 4 GB again, so the
-                # file leaves the queue as blocked; the archive copy stays.
+                # file leaves the queue to unverified (queue tail); the archive copy stays.
                 abandoned.append(entry)
                 continue
             src = archive / str(entry.get("RelativePath", ""))
@@ -505,10 +558,14 @@ def repair_batches(cfg: dict, staged_file: Path | None = None) -> None:
         if all(e.get("State") == "Staged" for e in entries):
             write_batch_markers(staging_root, batch_id, entries)
     if abandoned:
+        def record_abandoned(entries: list[dict]) -> None:
+            upsert_unverified(entries, "Handover copy gone without receipt", unverified_file,
+                              retry_hours=UNVERIFIED_RETRY_HOURS)
+
         _release_staged(cfg, staged, abandoned, "Handover copy gone without receipt",
-                        staged_file)
+                        staged_file, record=record_abandoned)
         write_log(f"{len(abandoned)} handover copies gone without a receipt after the "
-                  f"grace period: blocked, not restocked.", "WARN")
+                  f"grace period: moved to unverified (queue tail), not restocked.", "WARN")
     elif changed:
         save_staged(staged, staged_file)
 
@@ -562,57 +619,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
 
     max_file_capacity = int(MAX_BATCH_GIB * 1024**3)
 
-    # Verification retries are deliberately small and go first. They are not part
-    # of the normal queue, so a large uncertain backlog cannot refill the Pixel.
-    due = sorted(due_unverified(unverified_file),
-                 key=lambda e: (str(e.get("RetryAfterUtc", "")),
-                                str(e.get("FirstUnverifiedUtc", "")),
-                                str(e.get("RelativePath", ""))))
-    for entry in due:
-        rel = str(entry.get("RelativePath", "")).strip()
-        fp = str(entry.get("Fingerprint", "")).strip()
-        key = fp.lower()
-        if not rel or not fp or key in fps or key in blocked or key in staged_fps:
-            continue
-        try:
-            size = int(str(entry.get("Size", "0")) or 0)
-        except ValueError:
-            continue
-        if size > max_file_capacity:
-            continue
-        if size > capacity:
-            if held_bytes == 0 and not selected:
-                pass
-            else:
-                continue
-        elif selected_bytes + size > room:
-            continue
-        if retry_fps and retry_bytes + size > retry_budget:
-            continue
-        src = archive / rel
-        if not src.is_file():
-            continue
-        if src.stat().st_size == 0:
-            append_blocked([entry], "Empty file - nothing for Google Photos to back up")
-            remove_unverified([fp], unverified_file)
-            unverified.discard(key)
-            continue
-        sha = str(entry.get("Sha256", "")).strip()
-        if not sha:
-            write_log(f"Checksum for verification retry: {rel}")
-            sha = file_sha256(src)
-            entry["Sha256"] = sha
-        if sha.lower() in hashes:
-            add_completion(entry, fps, hashes, "Identical content already completed")
-            remove_unverified([fp], unverified_file)
-            unverified.discard(key)
-            write_log(f"Unverified content is now proven by an identical completion: {rel}", "OK")
-            continue
-        selected.append(entry)
-        retry_fps.add(key)
-        selected_bytes += size
-        retry_bytes += size
-
+    # 1. Fresh pictures from catalog go FIRST:
     for entry in sorted(catalog, key=catalog_sort_key):
         rel = str(entry.get("RelativePath", "")).strip()
         fp = str(entry.get("Fingerprint", "")).strip()
@@ -660,6 +667,58 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
             continue
         selected.append(entry)
         selected_bytes += size
+
+    # 2. Previously tried / unverified retries go to the END of the queue.
+    # Only stage retries if NO fresh pictures could be staged from the catalog:
+    if not selected:
+        due = sorted(due_unverified(unverified_file),
+                     key=lambda e: (str(e.get("RetryAfterUtc", "")),
+                                    str(e.get("FirstUnverifiedUtc", "")),
+                                    str(e.get("RelativePath", ""))))
+        for entry in due:
+            rel = str(entry.get("RelativePath", "")).strip()
+            fp = str(entry.get("Fingerprint", "")).strip()
+            key = fp.lower()
+            if not rel or not fp or key in fps or key in blocked or key in staged_fps:
+                continue
+            try:
+                size = int(str(entry.get("Size", "0")) or 0)
+            except ValueError:
+                continue
+            if size > max_file_capacity:
+                continue
+            if size > capacity:
+                if held_bytes == 0 and not selected:
+                    pass
+                else:
+                    continue
+            elif selected_bytes + size > room:
+                continue
+            if retry_fps and retry_bytes + size > retry_budget:
+                continue
+            src = archive / rel
+            if not src.is_file():
+                continue
+            if src.stat().st_size == 0:
+                append_blocked([entry], "Empty file - nothing for Google Photos to back up")
+                remove_unverified([fp], unverified_file)
+                unverified.discard(key)
+                continue
+            sha = str(entry.get("Sha256", "")).strip()
+            if not sha:
+                write_log(f"Checksum for verification retry: {rel}")
+                sha = file_sha256(src)
+                entry["Sha256"] = sha
+            if sha.lower() in hashes:
+                add_completion(entry, fps, hashes, "Identical content already completed")
+                remove_unverified([fp], unverified_file)
+                unverified.discard(key)
+                write_log(f"Unverified content is now proven by an identical completion: {rel}", "OK")
+                continue
+            selected.append(entry)
+            retry_fps.add(key)
+            selected_bytes += size
+            retry_bytes += size
 
     if catalog_changed:
         save_catalog(catalog, catalog_file)

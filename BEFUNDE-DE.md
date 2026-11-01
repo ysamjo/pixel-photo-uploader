@@ -610,3 +610,12 @@ Multi-Agenten-Audit (Design Critic & Codebase Auditor) zur Hänger-Vermeidung (�
   2. *Keyguard-Sperre im Watchdog:* Gesperrter Bildschirm setzt Companion auf `MONITORING`, wodurch `photos_watchdog` auf passives `inactive` schaltete. Schutz: Keyguard-Sperre muss als sichtbarer Alert gewertet werden.
   3. *ADB-Messlücken:* Kurze WLAN-ADB-Aussetzer dürfen `alert_since` nicht zurücksetzen, damit der 3-Stunden-Timeout für vorzeitige Freigabe zuverlässig zündet.
   4. *Rückkopplung für Freispeicher:* Companion muss den realen Telefonspeicher in `companion-log.txt` melden, damit `select_and_stage_batch()` bei < 2 GiB Restkapazität die Queue anhält statt in Resilio-`ENOSPC` zu laufen.
+
+## 18. Queue-Priorisierung und Bereinigung der Blockierten (Server 3.3.26, Stand 2026-11-01)
+
+- **Problem:** `blocked.csv` war auf 9.617 Dateien / 60,71 GiB angewachsen, davon 8.786 Einträge durch „Handover copy gone without receipt“. Stichproben in Google Fotos ergaben 100 % Erfolgsquote (alle geprüften Dateien waren längst gesichert). Ursache: `REPAIR_GRACE_SECONDS` (600 s) war kürzer als die Übertragungs- und Prüflatenz von Companion und Resilio. Sobald Google Fotos den Speicher freigab und Resilio die lokale Löschung spiegelte, buchte der Server die Datei nach 10 Minuten als blockiert ab, wodurch sie nie wieder eingereiht wurde.
+- **Lösung:**
+  1. `REPAIR_GRACE_SECONDS` von 600 auf 1800 s (30 min) erhöht.
+  2. Fehlende Handreichungskopien nach Ablauf der Schonfrist werden von `repair_batches()` nun nach `unverified.csv` (Queue-Ende) statt `blocked.csv` überführt.
+  3. `migrate_abandoned_blocks()` überführt alle historischen „Handover copy gone without receipt“ sowie Timeouts aus `blocked.csv` nach `unverified.csv`. Nur echte Blockaden (z. B. leere 0-Byte-Dateien) bleiben in `blocked.csv`.
+  4. **Queue-Priorisierung:** Neue/unverarbeitete Bilder aus dem Katalog werden zuerst hochgeladen. Erst wenn im Katalog keine neuen Bilder mehr vorhanden sind (`not selected`), werden bereits probierte oder unbestätigte Dateien am Ende der Queue erneut eingereiht.
