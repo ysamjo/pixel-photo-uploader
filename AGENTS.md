@@ -44,7 +44,7 @@ unbegrenztem Original-Qualitäts-Speicherplatz):
 
 ```bash
 .venv/bin/python -m pytest           # kein Netzwerk nötig
-docker build -t pixel-photo-uploader:3.3.26 .
+docker build -t pixel-photo-uploader:3.3.27 .
 docker compose -f docker-compose.local.yml up -d --build
 ```
 

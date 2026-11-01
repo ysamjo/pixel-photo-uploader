@@ -13,6 +13,10 @@ def _info(**over) -> dict:
         "rescan_minutes": 360, "deep_rescan_days": 7, "running": "", "pending": "",
         "completed_bytes": 49142109367, "completed_bytes_24h": 34068593739,
         "completed_24h": 3212, "unverified": 842, "unverified_due": 300, "blocked": 831,
+        "completed_verified_bytes": 49142109367, "completed_verified_count": 900,
+        "completed_assumed_bytes": 0, "completed_assumed_count": 0,
+        "completed_verified_bytes_24h": 34068593739,
+        "completed_assumed_bytes_24h": 0,
     }
     info.update(over)
     return info
@@ -31,9 +35,26 @@ def test_zaehler_sind_deutsch_formatiert():
                              open_bytes=1594536093406))
     assert "178.104" in html and "172.543" in html
     assert "1.485,03 GiB" in html
-    assert "45,77 GiB" in html and "31,73 GiB" in html
+    assert "45,77 GiB</b>belegt hochgeladen" in html
+    assert "31,73 GiB</b>belegt in den letzten 24 h" in html
     assert "842" in html and "300 retry-bereit" in html and "831" in html
     assert "178104" not in html and "1485.03 GiB" not in html
+
+
+def test_angenommene_dateien_zaehlen_nicht_als_hochgeladen():
+    """\"Assumed completed\" ohne Rueckbeleg muss getrennt von belegten Uploads stehen."""
+    html = render_page(_info(
+        completed_verified_bytes=155584 * 1024**2 * 1000,
+        completed_verified_count=15584,
+        completed_assumed_bytes=39850 * 1024**2 * 100,
+        completed_assumed_count=45156,
+        completed_verified_bytes_24h=1024**3,
+        completed_assumed_bytes_24h=2 * 1024**3,
+    ))
+    assert "belegt hochgeladen" in html and "nur angenommen" in html
+    assert "15.584 Dateien mit Rückbeleg" in html
+    assert "45.156 Dateien ohne Beleg" in html
+    assert "2,00 GiB davon angenommen" in html
 
 
 def test_nachtbilanz_zeigt_nur_erfolgsbelege_als_upload():

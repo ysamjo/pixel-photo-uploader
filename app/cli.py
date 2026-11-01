@@ -6,6 +6,7 @@ import argparse
 from . import APP_VERSION
 from .config import ensure_state_dir, load_config
 from .setup import apply_setup
+from .store import requeue_assumed
 from .sync import preflight, status, sync_once
 from .watch import watch
 
@@ -51,10 +52,18 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("preflight")
     w = sub.add_parser("watch")
     w.add_argument("--poll-seconds", type=int, default=60)
+    r = sub.add_parser("requeue-assumed",
+                       help="Stichprobe: angenommene Ledger-Zeilen erneut pruefen lassen")
+    r.add_argument("--limit", type=int, default=30)
     args = ap.parse_args(argv)
     ensure_state_dir()
     if args.cmd == "setup":
         cmd_setup()
+    elif args.cmd == "requeue-assumed":
+        rows = requeue_assumed(limit=args.limit)
+        print(f"{len(rows)} angenommene Dateien zurueck in die Pruefung:")
+        for row in rows:
+            print(f"  {row.get('RelativePath')}")
     elif args.cmd == "sync":
         try:
             print(sync_once(force_deep=args.deep))
