@@ -614,7 +614,16 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     retry_fps: set[str] = set()
     selected_bytes = 0
     retry_bytes = 0
-    retry_budget = min(room, int(UNVERIFIED_RETRY_GIB * 1024**3))
+    # Wiederholungen laufen in JEDER Charge mit, nicht erst wenn nichts Frisches
+    # mehr da ist: bei 50.000 offenen Bildern waeren sie sonst nie an der Reihe
+    # und liefen nur noch in die 72-h-Annahme. Das Budget wird vom Platz der
+    # frischen Dateien abgezogen, damit die Charge nicht ueberlaeuft.
+    due = sorted(due_unverified(unverified_file),
+                 key=lambda e: (str(e.get("RetryAfterUtc", "")),
+                                str(e.get("FirstUnverifiedUtc", "")),
+                                str(e.get("RelativePath", ""))))
+    retry_budget = min(room, int(UNVERIFIED_RETRY_GIB * 1024**3)) if due else 0
+    fresh_room = room - retry_budget
     catalog_changed = False
 
     max_file_capacity = int(MAX_BATCH_GIB * 1024**3)
@@ -646,7 +655,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
                 pass
             else:
                 continue
-        elif selected_bytes + size > room:
+        elif selected_bytes + size > fresh_room:
             continue
         src = archive / rel
         if not src.is_file():
@@ -668,57 +677,53 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
         selected.append(entry)
         selected_bytes += size
 
-    # 2. Previously tried / unverified retries go to the END of the queue.
-    # Only stage retries if NO fresh pictures could be staged from the catalog:
-    if not selected:
-        due = sorted(due_unverified(unverified_file),
-                     key=lambda e: (str(e.get("RetryAfterUtc", "")),
-                                    str(e.get("FirstUnverifiedUtc", "")),
-                                    str(e.get("RelativePath", ""))))
-        for entry in due:
-            rel = str(entry.get("RelativePath", "")).strip()
-            fp = str(entry.get("Fingerprint", "")).strip()
-            key = fp.lower()
-            if not rel or not fp or key in fps or key in blocked or key in staged_fps:
+    # 2. Previously tried / unverified retries fill the reserved budget of every
+    # batch, so a rejection is actually re-checked instead of only waiting out
+    # the promotion clock.
+    for entry in due:
+        rel = str(entry.get("RelativePath", "")).strip()
+        fp = str(entry.get("Fingerprint", "")).strip()
+        key = fp.lower()
+        if not rel or not fp or key in fps or key in blocked or key in staged_fps:
+            continue
+        try:
+            size = int(str(entry.get("Size", "0")) or 0)
+        except ValueError:
+            continue
+        if size > max_file_capacity:
+            continue
+        if size > capacity:
+            if held_bytes == 0 and not selected:
+                pass
+            else:
                 continue
-            try:
-                size = int(str(entry.get("Size", "0")) or 0)
-            except ValueError:
-                continue
-            if size > max_file_capacity:
-                continue
-            if size > capacity:
-                if held_bytes == 0 and not selected:
-                    pass
-                else:
-                    continue
-            elif selected_bytes + size > room:
-                continue
-            if retry_fps and retry_bytes + size > retry_budget:
-                continue
-            src = archive / rel
-            if not src.is_file():
-                continue
-            if src.stat().st_size == 0:
-                append_blocked([entry], "Empty file - nothing for Google Photos to back up")
-                remove_unverified([fp], unverified_file)
-                unverified.discard(key)
-                continue
-            sha = str(entry.get("Sha256", "")).strip()
-            if not sha:
-                write_log(f"Checksum for verification retry: {rel}")
-                sha = file_sha256(src)
-                entry["Sha256"] = sha
-            if sha.lower() in hashes:
-                add_completion(entry, fps, hashes, "Identical content already completed")
-                remove_unverified([fp], unverified_file)
-                unverified.discard(key)
-                write_log(f"Unverified content is now proven by an identical completion: {rel}", "OK")
-                continue
-            selected.append(entry)
-            retry_fps.add(key)
-            selected_bytes += size
-            retry_bytes += size
+        elif selected_bytes + size > room:
+            continue
+        if retry_fps and retry_bytes + size > retry_budget:
+            continue
+        src = archive / rel
+        if not src.is_file():
+            continue
+        if src.stat().st_size == 0:
+            append_blocked([entry], "Empty file - nothing for Google Photos to back up")
+            remove_unverified([fp], unverified_file)
+            unverified.discard(key)
+            continue
+        sha = str(entry.get("Sha256", "")).strip()
+        if not sha:
+            write_log(f"Checksum for verification retry: {rel}")
+            sha = file_sha256(src)
+            entry["Sha256"] = sha
+        if sha.lower() in hashes:
+            add_completion(entry, fps, hashes, "Identical content already completed")
+            remove_unverified([fp], unverified_file)
+            unverified.discard(key)
+            write_log(f"Unverified content is now proven by an identical completion: {rel}", "OK")
+            continue
+        selected.append(entry)
+        retry_fps.add(key)
+        selected_bytes += size
+        retry_bytes += size
 
     if catalog_changed:
         save_catalog(catalog, catalog_file)
