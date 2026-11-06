@@ -390,6 +390,9 @@ def remove_unverified(fingerprints, path: Path | None = None) -> int:
 
 
 MAX_UNVERIFIED_ATTEMPTS = 3
+# Fuer die Zeit-Regel muss die Datei mindestens ein zweites Mal angeboten worden
+# sein; Attempts zaehlt ab dem ersten Versuch.
+MIN_UNVERIFIED_ATTEMPTS_FOR_TIME = 2
 UNVERIFIED_PROMOTE_HOURS = 72.0
 
 
@@ -400,10 +403,14 @@ def promote_unverified_to_completed(path: Path | None = None,
 
     Google Photos 7.97+ no longer offers Resilio-synced files for deletion.
     The companion app keeps reporting "refused" and the files stall in
-    unverified.csv forever. After MAX_UNVERIFIED_ATTEMPTS retries (or
-    UNVERIFIED_PROMOTE_HOURS since the first refusal) we treat them as
-    completed: the archive copy stays, the Pixel copy is gone, and the
-    queue moves on.
+    unverified.csv forever. After MAX_UNVERIFIED_ATTEMPTS retries we treat them
+    as completed: the archive copy stays, the Pixel copy is gone, and the queue
+    moves on.
+
+    Die Frist allein reicht nicht: angenommen wird erst, was mindestens einmal
+    erneut angeboten wurde (Attempts >= 2), und die 72 h laufen ab diesem letzten
+    Versuch. Sonst wanderte eine Datei, die nie wieder an die Reihe kam, allein
+    durch Warten ins Ledger - eine Annahme ohne Wiedervorlage.
     """
     reference = now or datetime.now(timezone.utc)
     p = path or unverified_path()
@@ -418,9 +425,10 @@ def promote_unverified_to_completed(path: Path | None = None,
             attempts = int(str(row.get("Attempts", "0")) or 0)
         except ValueError:
             attempts = 0
-        first = _parse_utc(row.get("FirstUnverifiedUtc"))
-        hours = (reference - first).total_seconds() / 3600.0 if first != NEVER else 0.0
-        if attempts >= MAX_UNVERIFIED_ATTEMPTS or hours >= UNVERIFIED_PROMOTE_HOURS:
+        last = _parse_utc(row.get("LastAttemptUtc"))
+        hours = (reference - last).total_seconds() / 3600.0 if last != NEVER else 0.0
+        reoffered = attempts >= MIN_UNVERIFIED_ATTEMPTS_FOR_TIME
+        if attempts >= MAX_UNVERIFIED_ATTEMPTS or (reoffered and hours >= UNVERIFIED_PROMOTE_HOURS):
             promoted.append(row)
         else:
             keep.append(row)

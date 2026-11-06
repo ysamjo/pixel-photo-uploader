@@ -139,12 +139,30 @@ def test_promote_unverified_to_completed_respects_threshold(tmp_path, monkeypatc
     fps, hashes = store.load_completion_sets(completed_file)
     assert "fp1" in fps
 
-    # 3. Über 72 Stunden alt: wird befördert
+    # 3. Nur alt, nie wieder angeboten: bleibt - Warten allein ist keine Wiedervorlage
     row2 = {"Fingerprint": "fp2", "Sha256": "h2", "RelativePath": "2026/2.jpg",
-            "Size": 200, "FirstUnverifiedUtc": old, "Attempts": "1"}
+            "Size": 200, "FirstUnverifiedUtc": old, "Attempts": "1",
+            "LastAttemptUtc": ""}
+    store.save_unverified([row2], unverified_file)
+    promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
+    assert promoted == 0
+    assert len(store.load_unverified(unverified_file)) == 1
+
+    # 4. Erneut angeboten und seitdem 72 h alt: wird befördert
+    row2["Attempts"] = "2"
+    row2["LastAttemptUtc"] = old
     store.save_unverified([row2], unverified_file)
     promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
     assert promoted == 1
     assert len(store.load_unverified(unverified_file)) == 0
     fps, hashes = store.load_completion_sets(completed_file)
     assert "fp2" in fps
+
+    # 5. Erneut angeboten, aber die Uhr läuft ab dem letzten Versuch
+    row3 = {"Fingerprint": "fp3", "Sha256": "h3", "RelativePath": "2026/3.jpg",
+            "Size": 300, "FirstUnverifiedUtc": old, "Attempts": "2",
+            "LastAttemptUtc": recent}
+    store.save_unverified([row3], unverified_file)
+    promoted = store.promote_unverified_to_completed(unverified_file, completed_file, now=now)
+    assert promoted == 0
+    assert len(store.load_unverified(unverified_file)) == 1
