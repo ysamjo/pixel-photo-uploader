@@ -796,7 +796,7 @@ def test_migrate_abandoned_blocks(tmp_path, monkeypatch):
     assert batches.migrate_abandoned_blocks(blocked_file, unverified_file) == 0
 
 
-def test_select_and_stage_batch_prioritizes_fresh_over_unverified(tmp_path, monkeypatch):
+def test_wiederholungen_laufen_mit_jeder_charge_mit(tmp_path, monkeypatch):
     cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
     archive = Path(cfg["SourceRoot"])
 
@@ -827,22 +827,50 @@ def test_select_and_stage_batch_prioritizes_fresh_over_unverified(tmp_path, monk
         "Attempts": "1", "Reason": "Handover copy gone without receipt",
     }], unverified_file)
 
-    # 1. As long as fresh items are in catalog, fresh is staged and retry is NOT staged
+    # Frische Datei und faellige Wiederholung gehen in dieselbe Charge: die
+    # Wiederholung wartet nicht mehr, bis der Katalog leer ist.
     staged_count = batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file)
-    assert staged_count == 1
+    assert staged_count == 2
     staged = store.load_staged(staged_file)
-    assert staged[0]["Fingerprint"] == "fp-fresh"
-    assert staged[0].get("VerificationRetry") is not True
+    by_fp = {e["Fingerprint"]: e for e in staged}
+    assert set(by_fp) == {"fp-fresh", "fp-retry"}
+    assert by_fp["fp-retry"].get("VerificationRetry") is True
+    assert by_fp["fp-fresh"].get("VerificationRetry") is not True
 
-    # 2. Simulate fresh item completing
-    completed_file = tmp_path / "state" / "completed.csv"
-    store.add_completion(fresh_entry, set(), set(),
-                         "Android receipt after confirmed Google Photos free-up", completed_file)
+
+def test_wiederholungsbudget_bremst_nach_der_ersten_datei(tmp_path, monkeypatch):
+    """Das Retry-Budget begrenzt die Wiederholungen pro Charge (mind. eine)."""
+    cfg, catalog_file, staged_file = _state(tmp_path, monkeypatch)
+    archive = Path(cfg["SourceRoot"])
+    (archive / "fresh.jpg").write_bytes(os_bytes("fresh.jpg"))
+    catalog_file_entries = [{
+        "Fingerprint": "fp-fresh", "Sha256": "", "RelativePath": "fresh.jpg",
+        "Size": str(len(os_bytes("fresh.jpg"))),
+        "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True",
+    }]
+    retries = []
+    for name in ("retry-a.jpg", "retry-b.jpg"):
+        (archive / name).write_bytes(os_bytes(name))
+        catalog_file_entries.append({
+            "Fingerprint": f"fp-{name}", "Sha256": "", "RelativePath": name,
+            "Size": str(len(os_bytes(name))),
+            "LastWriteUtc": "2024-01-01T00:00:00+00:00", "Stable": "True",
+        })
+        retries.append({
+            "Fingerprint": f"fp-{name}", "Sha256": "", "RelativePath": name,
+            "Size": str(len(os_bytes(name))),
+            "FirstUnverifiedUtc": "2026-01-01T00:00:00+00:00",
+            "LastAttemptUtc": "2026-01-01T00:00:00+00:00",
+            "RetryAfterUtc": "2026-01-01T00:00:00+00:00",
+            "Attempts": "1", "Reason": "Handover copy gone without receipt",
+        })
+    store.save_catalog(catalog_file_entries, catalog_file)
     store.save_staged([], staged_file)
-
-    # 3. Now no fresh items are left in catalog - retry at the end of queue is picked up
-    staged_count2 = batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file)
-    assert staged_count2 == 1
-    staged2 = store.load_staged(staged_file)
-    assert staged2[0]["Fingerprint"] == "fp-retry"
-    assert staged2[0].get("VerificationRetry") is True
+    unverified_file = tmp_path / "state" / "unverified.csv"
+    store.save_unverified(retries, unverified_file)
+    # Budget 0 Byte: die erste Wiederholung kommt mit, die zweite nicht.
+    monkeypatch.setattr(batches, "UNVERIFIED_RETRY_GIB", 0.0)
+    assert batches.select_and_stage_batch(cfg, catalog_file, staged_file, unverified_file) == 2
+    staged = store.load_staged(staged_file)
+    assert sum(1 for e in staged if e.get("VerificationRetry") is True) == 1
+    assert any(e["Fingerprint"] == "fp-fresh" for e in staged)
