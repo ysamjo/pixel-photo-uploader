@@ -20,6 +20,7 @@ from . import staged_path as default_staged_path
 from . import blocked_path as default_blocked_path
 from . import unverified_path as default_unverified_path
 from .fingerprints import file_sha256
+from .runner import touch_heartbeat
 from .store import (
     COMPLETED_FIELDS, add_completion, append_blocked, blocked_fingerprints, catalog_sort_key,
     due_unverified, load_blocked, load_catalog, load_completion_sets, load_staged,
@@ -739,6 +740,7 @@ def select_and_stage_batch(cfg: dict, catalog_file: Path | None = None,
     new_records: list[dict] = []
     try:
         for i, entry in enumerate(selected, start=1):
+            touch_heartbeat("staging")
             ext = Path(str(entry["RelativePath"])).suffix.lower()
             fp_key = str(entry["Fingerprint"]).lower()
             staged_name = f"{i:06d}-{str(entry['Fingerprint'])[:12]}{ext}"

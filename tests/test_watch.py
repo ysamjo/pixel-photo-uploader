@@ -48,3 +48,55 @@ def test_zyklus_erfasst_neue_dateien_und_weckt_den_schlaefer_nicht_ewig(tmp_path
 
     runner.request_sync("deep")
     assert watch._wait(600) < 600  # a request wakes the loop instead of a ten-minute sleep
+
+
+def test_stall_watchdog_ruft_neustart_und_loest_lock_bei_haenger(tmp_path, monkeypatch):
+    import threading
+    from app import cli, log_path
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("PPU_STATE_DIR", str(state))
+    hung = threading.Event()
+
+    def stuck_sync(**_kwargs):
+        assert runner.acquire("watch")
+        runner.touch_heartbeat("import:OneDrive", force_disk=True)
+        assert hung.wait(timeout=3.0)
+
+    monkeypatch.setattr(watch, "sync_once", stuck_sync)
+    calls = []
+
+    def fake_hang():
+        calls.append(True)
+        hung.set()
+
+    watch.watch(poll_seconds=0, hang_seconds=0.08, on_hang=fake_hang, max_cycles=1)
+    assert calls == [True]
+    assert runner.holder() == ""
+    log_text = log_path().read_text(encoding="utf-8")
+    assert "Watcher hung in phase 'import:OneDrive'" in log_text
+    assert "stuck_sync" in log_text
+
+    recorded = []
+    monkeypatch.setattr(cli, "watch", lambda poll, hang_seconds=None: recorded.append((poll, hang_seconds)))
+    cli.main(["watch", "--poll-seconds", "15", "--hang-seconds", "120"])
+    assert recorded == [(15, 120)]
+
+
+def test_stall_watchdog_greift_nicht_wenn_fortschritt_gemeldet_wird(tmp_path, monkeypatch):
+    import time
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("PPU_STATE_DIR", str(state))
+    calls = []
+
+    def active_sync(**_kwargs):
+        for _ in range(4):
+            runner.touch_heartbeat("catalog")
+            time.sleep(0.03)
+
+    monkeypatch.setattr(watch, "sync_once", active_sync)
+    watch.watch(poll_seconds=0, hang_seconds=0.09, on_hang=lambda: calls.append(True), max_cycles=1)
+    assert calls == []

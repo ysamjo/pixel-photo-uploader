@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("preflight")
     w = sub.add_parser("watch")
     w.add_argument("--poll-seconds", type=int, default=60)
+    w.add_argument("--hang-seconds", type=int, default=None,
+                   help="Restart container when a watch cycle makes no progress for this many seconds")
     r = sub.add_parser("requeue-assumed",
                        help="Stichprobe: angenommene Ledger-Zeilen erneut pruefen lassen")
     r.add_argument("--limit", type=int, default=30)
@@ -70,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
         except BlockingIOError as exc:
             raise SystemExit(str(exc))
     elif args.cmd == "watch":
-        watch(args.poll_seconds)
+        watch(args.poll_seconds, hang_seconds=args.hang_seconds)
     elif args.cmd == "status":
         status()
     elif args.cmd == "preflight":

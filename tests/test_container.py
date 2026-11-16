@@ -176,3 +176,10 @@ def test_watchdog_hat_eigenen_prozess_ohne_root_und_ohne_host_adb_port(compose, 
 
 def test_katalog_compose_entspricht_der_massgeblichen_app_definition():
     assert _load(ROOT / 'zimaos/Apps/PixelPhotoUploader/docker-compose.yml') == _load(COMPOSE)
+
+
+def test_alle_dienste_haben_healthcheck_und_neustart(compose):
+    for name in ("server", "watcher", "photos-watchdog"):
+        service = compose["services"][name]
+        assert service["restart"] in {"unless-stopped", "always"}
+        assert service["healthcheck"]["test"][0] == "CMD"

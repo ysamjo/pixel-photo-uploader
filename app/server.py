@@ -409,6 +409,10 @@ def create_app() -> "FastAPI":
         handle_request_sync(_form(await request.body()))
         return RedirectResponse(url="/", status_code=303)
 
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True, "version": APP_VERSION}
+
     @app.get("/api/status")
     def api_status() -> dict:
         from .config import load_config

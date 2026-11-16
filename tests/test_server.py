@@ -216,3 +216,10 @@ def test_watchdog_status_ist_frisch_und_enthaelt_keine_rohen_adb_fehler(tmp_path
     assert watchdog_status()["state"] == "stale"
     p.write_text('[]')
     assert watchdog_status()["state"] == "unavailable"
+
+
+def test_healthz_meldet_ok(client):
+    from app import APP_VERSION
+    resp = client.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "version": APP_VERSION}

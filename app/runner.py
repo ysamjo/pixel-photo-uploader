@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,10 +18,69 @@ from .util import write_log
 
 # A cycle that cannot finish in half an hour is a crashed process, not a busy one.
 LOCK_STALE = timedelta(minutes=30)
+HEARTBEAT_DISK_INTERVAL = 10.0
+
+_hb_lock = threading.Lock()
+_hb_mono = time.monotonic()
+_hb_phase = "init"
+_hb_disk_mono = 0.0
 
 
 def lock_path() -> Path:
     return state_root() / "sync.lock"
+
+
+def heartbeat_path() -> Path:
+    return state_root() / "watcher-heartbeat.json"
+
+
+def touch_heartbeat(phase: str | None = None, *, force_disk: bool = False,
+                    path: Path | None = None) -> None:
+    """Record watcher progress in memory and throttled to disk for healthchecks."""
+    global _hb_mono, _hb_phase, _hb_disk_mono
+    now_mono = time.monotonic()
+    with _hb_lock:
+        _hb_mono = now_mono
+        if phase is not None:
+            _hb_phase = str(phase)
+        current_phase = _hb_phase
+        write_disk = force_disk or (now_mono - _hb_disk_mono >= HEARTBEAT_DISK_INTERVAL)
+        if write_disk:
+            _hb_disk_mono = now_mono
+    if not write_disk:
+        return
+    p = path or heartbeat_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({
+            "pid": os.getpid(),
+            "phase": current_phase,
+            "epoch": time.time(),
+            "updatedUtc": datetime.now(timezone.utc).isoformat(),
+        }) + "\n", encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def heartbeat_age() -> tuple[float, str]:
+    """Seconds since last progress heartbeat and the active phase name."""
+    with _hb_lock:
+        return max(0.0, time.monotonic() - _hb_mono), _hb_phase
+
+
+def is_heartbeat_fresh(max_age_seconds: float = 900.0, path: Path | None = None) -> bool:
+    """True when the persisted watcher heartbeat is newer than max_age_seconds."""
+    data = _read(path or heartbeat_path())
+    try:
+        epoch = float(data.get("epoch", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if epoch <= 0:
+        return False
+    age = time.time() - epoch
+    return age <= float(max_age_seconds)
 
 
 def request_path() -> Path:
