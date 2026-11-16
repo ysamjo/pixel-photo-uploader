@@ -6,13 +6,16 @@ Windows-only exclusive-lock check (see media.is_file_ready).
 from __future__ import annotations
 
 import errno
+import os
 import shutil
 import time
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .fingerprints import file_sha256, is_supported_media
 from .media import is_file_ready, media_category, media_date
+from .runner import touch_heartbeat
 from .util import write_log
 
 # Cloud mounts (rclone/FUSE, e.g. via ZimaOS Files) and sync clients leave
@@ -144,6 +147,15 @@ def move_media_file(source: Path, folder: Path, reason: str,
     return ("Moved", dest)
 
 
+def _walk_cloud_files(folder: Path, phase: str) -> Iterator[Path]:
+    """Yield files incrementally without materializing huge cloud trees up front."""
+    for root, dirs, files in os.walk(folder):
+        touch_heartbeat(phase)
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIR_NAMES)
+        for fname in sorted(files):
+            yield Path(root) / fname
+
+
 def run_import(cfg: dict) -> dict:
     if not cfg.get("ImportEnabled"):
         return {"moved": 0, "duplicates": 0, "archive_paths": []}
@@ -172,8 +184,11 @@ def run_import(cfg: dict) -> dict:
 
     for folder, name in cloud_sources:
         write_log(f"Importing stable media from {name} to inbox ...")
+        phase = f"import:{name}"
+        touch_heartbeat(phase)
         sweep_started = time.monotonic()
-        for f in sorted(folder.rglob("*")):
+        for f in _walk_cloud_files(folder, phase):
+            touch_heartbeat(phase)
             if not f.is_file() or f.is_symlink() or not is_supported_media(f):
                 continue
             if is_ignorable(f):
@@ -186,8 +201,10 @@ def run_import(cfg: dict) -> dict:
         sweep_seconds += time.monotonic() - sweep_started
 
     write_log("Sorting inbox ...")
+    touch_heartbeat("sort:inbox")
     sort_started = time.monotonic()
     for f in sorted([p for p in inbox.iterdir() if p.is_file() and not p.is_symlink()]):
+        touch_heartbeat("sort:inbox")
         if not is_supported_media(f) or is_ignorable(f) or not is_file_ready(f, stable_before):
             continue
         category = media_category(f)

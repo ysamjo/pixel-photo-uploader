@@ -11,9 +11,15 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.29
+    image: pixel-photo-uploader:3.3.30
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     ports:
       - target: 8000
         published: "8088"
@@ -42,9 +48,15 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.29
+    image: pixel-photo-uploader:3.3.30
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from app.runner import is_heartbeat_fresh; raise SystemExit(0 if is_heartbeat_fresh(900) else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     environment:
       PPU_STATE_DIR: /data/state
     volumes:
@@ -61,9 +73,15 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   photos-watchdog:
-    image: pixel-photo-uploader:3.3.29
+    image: pixel-photo-uploader:3.3.30
     restart: unless-stopped
     command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, time; from pathlib import Path; d = json.loads(Path('/data/state/photos-watchdog/photos-watchdog-status.json').read_text()); raise SystemExit(0 if time.time() - float(d.get('observedAt', 0)) <= 300 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     environment:
       PPU_STATE_DIR: /data/state
     volumes:
@@ -92,11 +110,11 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.29"
-  update_at: "2026-11-01"
+  version: "3.3.30"
+  update_at: "2026-11-16"
   release_notes:
-    en_US: Prioritize fresh catalog media first; migrate abandoned blocks to retryable unverified queue tail.
-    de_DE: "Frische Medien zuerst einreihen; abgebrochene Handreichungen ins unverified-Wiederholungsregister am Queue-Ende überführen."
+    en_US: Automatic watcher stall detection and container self-restart plus Docker healthchecks.
+    de_DE: "Automatische Hänger-Erkennung und Selbst-Neustart des Watchers sowie Docker-Healthchecks."
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues

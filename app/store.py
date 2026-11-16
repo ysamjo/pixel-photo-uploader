@@ -12,6 +12,7 @@ from . import (BULK_PATH_LIMIT, SCAN_PRUNE_GRACE_HOURS, blocked_path, catalog_pa
 from .fingerprints import fingerprint, is_supported_media, win_roundtrip_utc
 from .media import is_file_ready
 from .night_report import ASSUMED_PREFIX, RECEIPT_REASON
+from .runner import touch_heartbeat
 from .util import write_log
 
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
@@ -545,6 +546,7 @@ def _walk_media(source_root: Path, prune_before: datetime | None,
     pending: deque[tuple[Path, str]] = deque([(source_root, "")])
     found: list[Path] = []
     while pending:
+        touch_heartbeat("catalog")
         directory, key = pending.popleft()
         walked.add(key.lower())
         try:
@@ -613,6 +615,7 @@ def update_catalog(source_root: Path, stable_minutes: float, catalog_file: Path 
     new_count = 0
     total = 0
     for f in _walk_media(source_root, prune_before, walked, counters):
+        touch_heartbeat("catalog")
         try:
             entry = _catalog_entry(f, f.relative_to(source_root).as_posix(),
                                    old_by_fp, stable_before)

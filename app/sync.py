@@ -9,7 +9,7 @@ from .batches import (confirm_staged, expire_staged, handover_dir, migrate_aband
                       migrate_refusal_blocks, repair_batches, select_and_stage_batch, settle_refused)
 from .config import load_config
 from .pipeline import run_import
-from .runner import acquire, holder, release
+from .runner import acquire, holder, release, touch_heartbeat
 from .store import load_catalog, promote_unverified_to_completed, scan_decision, update_catalog
 from .util import clamp, write_log
 from . import MAX_DEEP_RESCAN_DAYS, MIN_DEEP_RESCAN_DAYS
@@ -74,9 +74,13 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
     try:
         cfg = load_config()
         if verify_folders:
+            touch_heartbeat("preflight")
             preflight(cfg)
+        touch_heartbeat("import")
         result = run_import(cfg)
+        touch_heartbeat("reconcile")
         catalog = reconcile(cfg, result.get("archive_paths", ()), force_deep=force_deep)
+        touch_heartbeat("settle")
         migrate_refusal_blocks()
         migrate_abandoned_blocks()
         confirmed = confirm_staged(cfg)
@@ -86,6 +90,7 @@ def sync_once(force_deep: bool = False, reason: str = "sync",
         # Belege zuerst, dann auffuellen: was gerade abgerechnet ist, braucht keine
         # Kopie zurueck ins Archiv-Regal.
         repair_batches(cfg)
+        touch_heartbeat("stage")
         staged_count = select_and_stage_batch(cfg)
         return {"import": result, "catalog_files": len(catalog),
                 "confirmed": confirmed, "refused": refused, "promoted": promoted,

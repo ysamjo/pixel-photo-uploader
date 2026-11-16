@@ -62,3 +62,19 @@ def test_bitte_wird_nur_einmal_abgeholt(tmp_path, monkeypatch):
     assert runner.take_request() == "deep"
     assert runner.take_request() is None
     assert runner.pending_request() == ""
+
+
+def test_heartbeat_schreibt_datei_und_prueft_alter(tmp_path, monkeypatch):
+    import time
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    assert runner.is_heartbeat_fresh(60) is False
+
+    runner.touch_heartbeat("import:OneDrive", force_disk=True)
+    data = json.loads(runner.heartbeat_path().read_text(encoding="utf-8"))
+    assert data["phase"] == "import:OneDrive"
+    assert runner.is_heartbeat_fresh(60) is True
+    assert runner.heartbeat_age()[1] == "import:OneDrive"
+
+    data["epoch"] = time.time() - 1200
+    runner.heartbeat_path().write_text(json.dumps(data), encoding="utf-8")
+    assert runner.is_heartbeat_fresh(60) is False
