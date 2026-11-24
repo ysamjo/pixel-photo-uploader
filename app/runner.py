@@ -18,6 +18,8 @@ from .util import write_log
 
 # A cycle that cannot finish in half an hour is a crashed process, not a busy one.
 LOCK_STALE = timedelta(minutes=30)
+# An empty or half-written lock file only happens during a crash in the write window.
+CORRUPT_LOCK_STALE = timedelta(seconds=60)
 HEARTBEAT_DISK_INTERVAL = 10.0
 
 _hb_lock = threading.Lock()
@@ -154,26 +156,44 @@ def _as_pid(value) -> int:
         return -1
 
 
+def _read_lock(path: Path) -> tuple[str, dict]:
+    """Read lock state: ('missing', {}), ('ok', dict), ('corrupt', {}), or ('error', {})."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing", {}
+    except OSError:
+        return "error", {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return "corrupt", {}
+    if not isinstance(data, dict) or not data:
+        return "corrupt", {}
+    return "ok", data
+
+
 def acquire(reason: str = "run", path: Path | None = None) -> bool:
     p = path or lock_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    current = _read(p)
-    if not current and p.exists():
-        # Leere/kaputte Lock-Datei (Absturz zwischen O_EXCL und Schreiben): nach
-        # LOCK_STALE als verwaist behandeln, sonst blockiert sie fuer immer.
+    status, current = _read_lock(p)
+    if status == "error":
+        return False
+    if status == "corrupt":
+        # Empty/corrupt lock file (e.g. crash between O_EXCL and write): treat as
+        # stale after CORRUPT_LOCK_STALE so it cannot block the watcher forever.
         try:
             age = time.time() - p.stat().st_mtime
         except OSError:
-            age = 0.0
-        if age >= LOCK_STALE.total_seconds():
-            write_log("Empty/corrupt lock file is stale; taking over.", "WARN")
-            try:
-                p.unlink()
-            except OSError:
-                return False
-        else:
             return False
-    if current:
+        if age < CORRUPT_LOCK_STALE.total_seconds():
+            return False
+        try:
+            p.unlink()
+        except OSError:
+            return False
+        write_log("Empty/corrupt lock file is stale; taking over.", "WARN")
+    if status == "ok":
         taken = _utc(current.get("takenUtc"))
         fresh = datetime.now(timezone.utc) - taken < LOCK_STALE
         raw_started = current.get("started")
@@ -181,12 +201,12 @@ def acquire(reason: str = "run", path: Path | None = None) -> bool:
                            None if raw_started is None else _as_pid(raw_started))
         if fresh and alive:
             return False
-        write_log(f"Lock of '{current.get('reason', '?')}' from {taken:%Y-%m-%d %H:%M} "
-                  "is stale; taking over.", "WARN")
         try:
             p.unlink()
         except OSError:
             return False
+        write_log(f"Lock of '{current.get('reason', '?')}' from {taken:%Y-%m-%d %H:%M} "
+                  "is stale; taking over.", "WARN")
     try:
         fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:

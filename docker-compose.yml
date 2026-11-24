@@ -11,7 +11,7 @@ name: pixel-photo-uploader
 
 services:
   server:
-    image: pixel-photo-uploader:3.3.30
+    image: pixel-photo-uploader:3.3.31
     restart: unless-stopped
     command: ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
@@ -48,7 +48,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   watcher:
-    image: pixel-photo-uploader:3.3.30
+    image: pixel-photo-uploader:3.3.31
     restart: unless-stopped
     command: ["python", "-m", "app.cli", "watch", "--poll-seconds", "60"]
     healthcheck:
@@ -73,7 +73,7 @@ services:
       # - /media/Data_1/Pictures:/data/archive/Altbestand:ro
 
   photos-watchdog:
-    image: pixel-photo-uploader:3.3.30
+    image: pixel-photo-uploader:3.3.31
     restart: unless-stopped
     command: ["python", "-m", "app.photos_watchdog", "--device", "192.168.178.53:5555", "--allow-restart"]
     healthcheck:
@@ -110,11 +110,11 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "3.3.30"
-  update_at: "2026-11-16"
+  version: "3.3.31"
+  update_at: "2026-11-24"
   release_notes:
-    en_US: Automatic watcher stall detection and container self-restart plus Docker healthchecks.
-    de_DE: "Automatische Hänger-Erkennung und Selbst-Neustart des Watchers sowie Docker-Healthchecks."
+    en_US: Automatically recover from empty or corrupt sync.lock files after 60s.
+    de_DE: "Automatische Erholung von leeren oder beschädigten sync.lock-Dateien nach 60 s."
   website: https://github.com/ysamjo/pixel-photo-uploader
   repo: https://github.com/ysamjo/pixel-photo-uploader
   support: https://github.com/ysamjo/pixel-photo-uploader/issues
