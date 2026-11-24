@@ -78,3 +78,14 @@ def test_heartbeat_schreibt_datei_und_prueft_alter(tmp_path, monkeypatch):
     data["epoch"] = time.time() - 1200
     runner.heartbeat_path().write_text(json.dumps(data), encoding="utf-8")
     assert runner.is_heartbeat_fresh(60) is False
+
+
+def test_leere_sperrdatei_wird_nach_frist_gebrochen(tmp_path, monkeypatch):
+    monkeypatch.setenv("PPU_STATE_DIR", str(tmp_path))
+    p = runner.lock_path()
+    p.write_text("")
+    assert not runner.acquire("api")  # frisch: noch nicht verwaist
+    old = datetime.now().timestamp() - 3600
+    os.utime(p, (old, old))
+    assert runner.acquire("api")
+    runner.release()

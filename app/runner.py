@@ -158,6 +158,21 @@ def acquire(reason: str = "run", path: Path | None = None) -> bool:
     p = path or lock_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     current = _read(p)
+    if not current and p.exists():
+        # Leere/kaputte Lock-Datei (Absturz zwischen O_EXCL und Schreiben): nach
+        # LOCK_STALE als verwaist behandeln, sonst blockiert sie fuer immer.
+        try:
+            age = time.time() - p.stat().st_mtime
+        except OSError:
+            age = 0.0
+        if age >= LOCK_STALE.total_seconds():
+            write_log("Empty/corrupt lock file is stale; taking over.", "WARN")
+            try:
+                p.unlink()
+            except OSError:
+                return False
+        else:
+            return False
     if current:
         taken = _utc(current.get("takenUtc"))
         fresh = datetime.now(timezone.utc) - taken < LOCK_STALE
